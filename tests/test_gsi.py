@@ -2,7 +2,7 @@ import unittest
 import tempfile
 from pathlib import Path
 
-from app import DISCORD_APPLICATION_ID, find_dota_cfg_dir, gsi_config_text, install_gsi_config, presence_from_gsi, prettify_hero, steam_roots_from_vdf
+from app import DOTA_LOGO_URL, DISCORD_APPLICATION_ID, find_dota_cfg_dir, gsi_config_text, install_gsi_config, presence_from_gsi, prettify_hero, steam_roots_from_vdf
 
 
 class GsiParsingTests(unittest.TestCase):
@@ -12,7 +12,7 @@ class GsiParsingTests(unittest.TestCase):
     def test_hero_name(self):
         self.assertEqual(prettify_hero("npc_dota_hero_axe"), "Axe")
 
-    def test_in_game_presence(self):
+    def test_ranked_presence_uses_hero_portrait(self):
         result = presence_from_gsi({
             "map": {"game_state": "DOTA_GAMERULES_STATE_GAME_IN_PROGRESS", "game_time": 90, "game_mode": 22},
             "player": {"kills": 4, "deaths": 2, "assists": 7, "net_worth": 8400},
@@ -20,7 +20,30 @@ class GsiParsingTests(unittest.TestCase):
         })
         self.assertEqual(result["status"], "В игре")
         self.assertEqual(result["details"], "Axe · 4/2/7 · 8 400 NW")
-        self.assertEqual(result["state"], "Ranked All Pick")
+        self.assertEqual(result["state"], "Рейтинг · All Pick")
+        self.assertEqual(result["large_image"], "https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/heroes/axe.png")
+
+    def test_hero_selection_uses_dota_logo_until_match_starts(self):
+        result = presence_from_gsi({
+            "map": {"game_state": "DOTA_GAMERULES_STATE_HERO_SELECTION", "game_mode": 22},
+            "hero": {"name": "npc_dota_hero_invoker"},
+        })
+        self.assertEqual(result["status"], "Выбирает героя")
+        self.assertEqual(result["details"], "Выбирает героя")
+        self.assertEqual(result["large_image"], DOTA_LOGO_URL)
+        self.assertEqual(result["state"], "Рейтинг · All Pick")
+
+    def test_hero_selection_without_hero_keeps_generic_status(self):
+        result = presence_from_gsi({
+            "map": {"game_state": "DOTA_GAMERULES_STATE_HERO_SELECTION"},
+        })
+        self.assertEqual(result["details"], "Выбирает героя")
+
+    def test_training_and_bot_lobbies_are_distinguished(self):
+        training = presence_from_gsi({"map": {"game_state": "DOTA_GAMERULES_STATE_GAME_IN_PROGRESS", "game_mode": 10}})
+        bots = presence_from_gsi({"map": {"game_state": "DOTA_GAMERULES_STATE_GAME_IN_PROGRESS", "game_mode": 1, "lobby_type": 4}})
+        self.assertEqual(training["state"], "Тренировка")
+        self.assertEqual(bots["state"], "Против ботов")
 
     def test_post_game_state(self):
         result = presence_from_gsi({
@@ -54,6 +77,7 @@ class GsiParsingTests(unittest.TestCase):
         config = gsi_config_text("abc")
         self.assertIn('"uri" "http://127.0.0.1:38174/"', config)
         self.assertNotIn("0.0.0.0", config)
+        self.assertIn('"draft" "1"', config)
 
 
 if __name__ == "__main__":
