@@ -11,6 +11,7 @@ class GsiParsingTests(unittest.TestCase):
 
     def test_hero_name(self):
         self.assertEqual(prettify_hero("npc_dota_hero_axe"), "Axe")
+        self.assertEqual(prettify_hero("npc_dota_hero_rattletrap"), "Clockwerk")
 
     def test_ranked_presence_uses_hero_portrait(self):
         result = presence_from_gsi({
@@ -44,6 +45,20 @@ class GsiParsingTests(unittest.TestCase):
         bots = presence_from_gsi({"map": {"game_state": "DOTA_GAMERULES_STATE_GAME_IN_PROGRESS", "game_mode": 1, "lobby_type": 4}})
         self.assertEqual(training["state"], "Тренировка")
         self.assertEqual(bots["state"], "Против ботов")
+
+    def test_local_practice_without_match_id_is_not_labeled_as_normal(self):
+        result = presence_from_gsi({
+            "map": {"game_state": "DOTA_GAMERULES_STATE_GAME_IN_PROGRESS", "game_mode": 1, "matchid": 0},
+            "hero": {"name": "npc_dota_hero_rattletrap"},
+        })
+        self.assertEqual(result["state"], "Тренировка")
+        self.assertIn("Clockwerk", result["details"])
+
+    def test_online_all_pick_with_match_id_stays_normal(self):
+        result = presence_from_gsi({
+            "map": {"game_state": "DOTA_GAMERULES_STATE_GAME_IN_PROGRESS", "game_mode": 1, "matchid": 12345},
+        })
+        self.assertEqual(result["state"], "Обычная игра · All Pick")
 
     def test_post_game_state(self):
         result = presence_from_gsi({
