@@ -13,8 +13,11 @@ import tkinter as tk
 from tkinter import ttk
 
 APP_NAME = "Dota Activity"
+DISCORD_GAME_NAME = "Dota"
 GSI_PORT = 38174
 DISCORD_APPLICATION_ID = "1559228191195922513"
+STEAM_ASSET_ROOT = "https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react"
+DOTA_LOGO_URL = f"{STEAM_ASSET_ROOT}/global/dota2_logo_horiz.png"
 APP_DIR = Path(os.environ.get("APPDATA", Path.home())) / "DotaActivity"
 SETTINGS_PATH = APP_DIR / "settings.json"
 GSI_FILENAME = "gamestate_integration_dotapresence.cfg"
@@ -29,10 +32,13 @@ GSI_STATES = {
 }
 GAME_MODES = {
     1: "All Pick", 2: "Captains Mode", 3: "Random Draft", 4: "Single Draft",
-    5: "All Random", 11: "Mid Only", 12: "Least Played", 13: "Limited Heroes",
-    15: "Custom", 16: "Captains Draft", 18: "Ability Draft", 19: "Event",
-    22: "Ranked All Pick", 23: "Turbo", 24: "Mutation",
+    5: "All Random", 7: "Diretide", 8: "Reverse Captains Mode", 9: "Greeviling",
+    10: "Тренировка", 11: "Mid Only", 12: "Least Played", 13: "Limited Heroes",
+    14: "Compendium Matchmaking", 15: "Custom", 16: "Captains Draft",
+    18: "Ability Draft", 19: "Event", 20: "All Random Deathmatch",
+    21: "1v1 Mid", 22: "All Pick", 23: "Turbo", 24: "Mutation",
 }
+LOBBY_TYPES = {1: "Тренировка", 2: "Турнир", 3: "Обучение", 4: "Против ботов", 7: "Рейтинг"}
 
 
 def prettify_hero(raw: str) -> str:
@@ -41,7 +47,51 @@ def prettify_hero(raw: str) -> str:
 
 
 def hero_asset(raw: str) -> str:
-    return raw.removeprefix("npc_dota_hero_") if raw else ""
+    hero = raw.removeprefix("npc_dota_hero_") if raw else ""
+    return {"windrunner": "windranger", "abyssal_underlord": "underlord"}.get(hero, hero)
+
+
+def game_context(map_data: dict) -> str:
+    """Describe ranked, bot, training, or the known game mode from GSI fields."""
+    lobby = map_data.get("lobby_type")
+    lobby_text = str(lobby or "").strip().lower()
+    if any(word in lobby_text for word in ("bot", "coop", "co-op")):
+        return "Против ботов"
+    if any(word in lobby_text for word in ("practice", "training", "трен")):
+        return "Тренировка"
+    if "rank" in lobby_text:
+        return "Рейтинг"
+    try:
+        lobby_id = int(lobby)
+    except (TypeError, ValueError):
+        lobby_id = None
+    if lobby_id in LOBBY_TYPES:
+        return LOBBY_TYPES[lobby_id]
+
+    mode = map_data.get("game_mode")
+    mode_text = str(mode or "").strip().lower()
+    if any(word in mode_text for word in ("bot", "coop", "co-op")):
+        return "Против ботов"
+    if any(word in mode_text for word in ("tutorial", "training", "трен")):
+        return "Тренировка"
+    if "rank" in mode_text:
+        return "Рейтинг · All Pick"
+    try:
+        mode_id = int(mode)
+    except (TypeError, ValueError):
+        mode_id = None
+    if mode_id == 22:
+        return "Рейтинг · All Pick"
+    if mode_id == 23:
+        return "Turbo"
+    if mode_id == 10:
+        return "Тренировка"
+    return GAME_MODES.get(mode_id, "Обычная игра")
+
+
+def hero_image_url(raw: str) -> str:
+    hero = hero_asset(raw)
+    return f"{STEAM_ASSET_ROOT}/heroes/{hero}.png" if hero else DOTA_LOGO_URL
 
 
 def presence_from_gsi(payload: dict) -> dict | None:
@@ -51,12 +101,15 @@ def presence_from_gsi(payload: dict) -> dict | None:
     hero = payload.get("hero") or {}
     state = str(map_data.get("game_state", ""))
     game_time = map_data.get("game_time")
-    hero_name = prettify_hero(str(hero.get("name", "")))
-    mode_id = map_data.get("game_mode")
-    mode = GAME_MODES.get(mode_id, "Dota 2") if isinstance(mode_id, int) else "Dota 2"
+    hero_raw_name = str(hero.get("name", ""))
+    hero_name = prettify_hero(hero_raw_name)
+    mode = game_context(map_data)
 
-    if state in {"DOTA_GAMERULES_STATE_HERO_SELECTION", "DOTA_GAMERULES_STATE_PRE_GAME"}:
-        return {"status": "Матч найден", "details": f"Выбирает героя · {mode}", "image": "dota2"}
+    if state == "DOTA_GAMERULES_STATE_HERO_SELECTION":
+        return {"status": "Выбирает героя", "details": "Выбирает героя", "state": mode, "large_image": DOTA_LOGO_URL, "large_text": "Dota 2"}
+
+    if state == "DOTA_GAMERULES_STATE_PRE_GAME":
+        return {"status": "Подготовка к матчу", "details": "Матч скоро начнётся", "state": mode, "large_image": DOTA_LOGO_URL, "large_text": "Dota 2"}
 
     if state == "DOTA_GAMERULES_STATE_GAME_IN_PROGRESS":
         kills, deaths, assists = (player.get(k, 0) for k in ("kills", "deaths", "assists"))
@@ -66,8 +119,8 @@ def presence_from_gsi(payload: dict) -> dict | None:
             details += f" · {net_worth:,} NW".replace(",", " ")
         start = int(time.time() - game_time) if isinstance(game_time, (int, float)) and game_time > 0 else None
         return {
-            "status": "В игре", "details": details, "state": mode, "image": "dota2",
-            "hero_image": hero_asset(str(hero.get("name", ""))), "start": start,
+            "status": "В игре", "details": details, "state": mode,
+            "large_image": hero_image_url(hero_raw_name), "large_text": hero_name, "start": start,
         }
 
     if state == "DOTA_GAMERULES_STATE_POST_GAME":
@@ -77,7 +130,7 @@ def presence_from_gsi(payload: dict) -> dict | None:
         kda = f"{player.get('kills', 0)}/{player.get('deaths', 0)}/{player.get('assists', 0)}"
         return {
             "status": "После матча", "details": f"{outcome} · {hero_name} · {kda}",
-            "image": "dota2", "hero_image": hero_asset(str(hero.get("name", ""))),
+            "state": mode, "large_image": hero_image_url(hero_raw_name), "large_text": hero_name,
         }
     return None
 
@@ -140,6 +193,7 @@ def gsi_config_text(token: str) -> str:
         "map" "1"
         "player" "1"
         "hero" "1"
+        "draft" "1"
     }}
 }}
 '''
@@ -189,10 +243,11 @@ class DotaActivityApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title(APP_NAME)
-        self.root.geometry("460x310")
-        self.root.minsize(420, 280)
+        self.root.geometry("460x340")
+        self.root.minsize(420, 300)
         self.root.configure(bg="#101116")
         self.rpc = None
+        self.tray_icon = None
         self.server: ThreadingHTTPServer | None = None
         self.events: queue.Queue = queue.Queue()
         GSIHandler.events = self.events
@@ -213,7 +268,7 @@ class DotaActivityApp:
         self.root.after(200, self.try_connect)
         self.root.after(500, self.poll_events)
         self.root.after(5000, self.maintenance)
-        self.root.protocol("WM_DELETE_WINDOW", self.close)
+        self.root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
 
     @staticmethod
     def load_settings() -> dict:
@@ -250,7 +305,8 @@ class DotaActivityApp:
         ttk.Label(manual, text="Состояние вручную (если Dota его не передала)").pack(side="left", fill="x", expand=True)
         ttk.Combobox(manual, textvariable=self.manual_var, values=list(GSI_STATES), state="readonly", width=18).pack(side="left", padx=(8, 0))
         ttk.Button(manual, text="Показать", command=self.apply_manual).pack(side="left", padx=(6, 0))
-        ttk.Label(main, text="Оставь Dota Activity и Discord запущенными во время игры.", style="Muted.TLabel", wraplength=400).pack(anchor="w", pady=(8, 0))
+        ttk.Label(main, text="Оставь приложение и Discord запущенными во время игры.", style="Muted.TLabel", wraplength=400).pack(anchor="w", pady=(8, 0))
+        ttk.Button(main, text="Свернуть в трей", command=self.hide_to_tray).pack(anchor="e", pady=(10, 0))
 
     def ensure_gsi(self):
         cfg_dir = find_dota_cfg_dir()
@@ -302,11 +358,13 @@ class DotaActivityApp:
         if not self.rpc:
             return
         try:
-            # Text-only presence works immediately without uploading image assets
-            # in the Discord Developer Portal.
+            # Use public Dota image URLs; no custom Discord asset upload is needed.
             kwargs = {
+                "name": DISCORD_GAME_NAME,
                 "details": data.get("details", "Playing Dota 2"),
                 "state": data.get("state", "Dota 2"),
+                "large_image": data.get("large_image", DOTA_LOGO_URL),
+                "large_text": data.get("large_text", "Dota 2"),
             }
             if data.get("start"):
                 kwargs["start"] = data["start"]
@@ -344,18 +402,79 @@ class DotaActivityApp:
             self.try_connect()
         self.root.after(5000, self.maintenance)
 
-    def close(self):
-        self.save_settings()
-        if self.rpc:
+    def _create_tray_icon(self):
+        import pystray
+        from PIL import Image, ImageDraw
+
+        image = Image.new("RGBA", (64, 64), (16, 17, 22, 255))
+        draw = ImageDraw.Draw(image)
+        draw.ellipse((7, 7, 57, 57), fill=(232, 64, 54, 255))
+        draw.polygon(((32, 14), (45, 48), (32, 42), (19, 48)), fill=(255, 255, 255, 255))
+        menu = pystray.Menu(
+            pystray.MenuItem("Открыть Dota Activity", lambda _icon, _item: self.root.after(0, self.show_window)),
+            pystray.MenuItem("Выход", lambda _icon, _item: self.root.after(0, self.exit_app)),
+        )
+        self.tray_icon = pystray.Icon("DotaActivity", image, APP_NAME, menu)
+        threading.Thread(target=self.tray_icon.run, name="DotaActivityTray", daemon=True).start()
+
+    def hide_to_tray(self):
+        if self.tray_icon is None:
             try:
-                self.rpc.clear()
-                self.rpc.close()
-            except Exception:
+                self._create_tray_icon()
+            except Exception as exc:
+                from tkinter import messagebox
+                messagebox.showerror("Системный трей", f"Не удалось свернуть приложение в трей.\n\n{exc}")
+                return
+        self.root.withdraw()
+
+    def show_window(self):
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
+
+    def exit_app(self):
+        if getattr(self, "_exiting", False):
+            return
+        self._exiting = True
+        try:
+            try:
+                self.save_settings()
+            except OSError:
                 pass
-        if self.server:
-            self.server.shutdown()
-            self.server.server_close()
-        self.root.destroy()
+            if self.tray_icon:
+                try:
+                    self.tray_icon.stop()
+                except Exception:
+                    pass
+                self.tray_icon = None
+            if self.rpc:
+                rpc, self.rpc = self.rpc, None
+                try:
+                    rpc.clear()
+                except Exception:
+                    pass
+                try:
+                    rpc.close()
+                except Exception:
+                    pass
+            if self.server:
+                server, self.server = self.server, None
+                try:
+                    server.shutdown()
+                except Exception:
+                    pass
+                try:
+                    server.server_close()
+                except Exception:
+                    pass
+        finally:
+            try:
+                self.root.quit()
+            finally:
+                try:
+                    self.root.destroy()
+                except tk.TclError:
+                    pass
 
 
 def main():
