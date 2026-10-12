@@ -17,7 +17,8 @@ DISCORD_GAME_NAME = "Dota"
 GSI_PORT = 38174
 DISCORD_APPLICATION_ID = "1559228191195922513"
 STEAM_ASSET_ROOT = "https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react"
-DOTA_LOGO_URL = f"{STEAM_ASSET_ROOT}/global/dota2_logo_horiz.png"
+# A square image is required here: Discord crops large Rich Presence art to a square.
+DOTA_LOGO_URL = "https://raw.githubusercontent.com/Kolt5ik/DotaActivity/feature/discord-presence-polish/assets/dota-logo-square.png"
 APP_DIR = Path(os.environ.get("APPDATA", Path.home())) / "DotaActivity"
 SETTINGS_PATH = APP_DIR / "settings.json"
 GSI_FILENAME = "gamestate_integration_dotapresence.cfg"
@@ -43,6 +44,17 @@ LOBBY_TYPES = {1: "Тренировка", 2: "Турнир", 3: "Обучени�
 
 def prettify_hero(raw: str) -> str:
     name = raw.removeprefix("npc_dota_hero_").replace("_", " ").strip()
+    official_names = {
+        "rattletrap": "Clockwerk", "windrunner": "Windranger", "zuus": "Zeus",
+        "nevermore": "Shadow Fiend", "skeleton king": "Wraith King",
+        "furion": "Nature's Prophet", "queenofpain": "Queen of Pain",
+        "wisp": "Io", "shredder": "Timbersaw", "life stealer": "Lifestealer",
+        "abyssal underlord": "Underlord", "magnataur": "Magnus",
+        "anti mage": "Anti-Mage", "obsidian destroyer": "Outworld Destroyer",
+        "treant": "Treant Protector", "vengefulspirit": "Vengeful Spirit",
+    }
+    if name in official_names:
+        return official_names[name]
     return name.title() if name else "Dota 2"
 
 
@@ -51,7 +63,7 @@ def hero_asset(raw: str) -> str:
     return {"windrunner": "windranger", "abyssal_underlord": "underlord"}.get(hero, hero)
 
 
-def game_context(map_data: dict) -> str:
+def game_context(map_data: dict, game_state: str = "") -> str:
     """Describe ranked, bot, training, or the known game mode from GSI fields."""
     lobby = map_data.get("lobby_type")
     lobby_text = str(lobby or "").strip().lower()
@@ -86,6 +98,14 @@ def game_context(map_data: dict) -> str:
         return "Turbo"
     if mode_id == 10:
         return "Тренировка"
+    if mode_id in (None, 0, 1):
+        match_id = map_data.get("matchid")
+        # Local demo/practice games have no server match ID. Normal online
+        # matches do, even when their game mode is plain All Pick.
+        if game_state == "DOTA_GAMERULES_STATE_GAME_IN_PROGRESS" and str(match_id or "0") == "0":
+            return "Тренировка"
+    if mode_id == 1:
+        return "Обычная игра · All Pick"
     return GAME_MODES.get(mode_id, "Обычная игра")
 
 
@@ -103,7 +123,7 @@ def presence_from_gsi(payload: dict) -> dict | None:
     game_time = map_data.get("game_time")
     hero_raw_name = str(hero.get("name", ""))
     hero_name = prettify_hero(hero_raw_name)
-    mode = game_context(map_data)
+    mode = game_context(map_data, state)
 
     if state == "DOTA_GAMERULES_STATE_HERO_SELECTION":
         return {"status": "Выбирает героя", "details": "Выбирает героя", "state": mode, "large_image": DOTA_LOGO_URL, "large_text": "Dota 2"}
