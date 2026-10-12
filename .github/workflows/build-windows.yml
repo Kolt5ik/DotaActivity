@@ -1,10 +1,10 @@
 name: Build Windows app
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
+  push:
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -25,43 +25,33 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt pyinstaller
 
+      - name: Verify Discord application ID
+        shell: pwsh
+        run: |
+          $source = Get-Content app.py -Raw
+          if ($source -notmatch 'DISCORD_APPLICATION_ID\s*=\s*"\d+"') {
+            throw "A numeric Discord Application ID must be configured in app.py."
+          }
+
       - name: Run tests
         run: python -m unittest discover -s tests
 
       - name: Build standalone executable
         run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name DotaActivity --collect-all pypresence app.py
 
-      - name: Upload executable
-        if: github.event_name != 'pull_request'
+      - name: Upload test artifact
         uses: actions/upload-artifact@v4
         with:
           name: DotaActivity-Windows-x64
           path: dist/DotaActivity.exe
           if-no-files-found: error
-          retention-days: 90
+          retention-days: 30
 
-      - name: Move rolling release tag
-        if: github.event_name != 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const ref = 'tags/latest';
-            try {
-              await github.rest.git.getRef({ owner: context.repo.owner, repo: context.repo.repo, ref });
-              await github.rest.git.updateRef({ owner: context.repo.owner, repo: context.repo.repo, ref, sha: context.sha, force: true });
-            } catch (error) {
-              if (error.status !== 404) throw error;
-              await github.rest.git.createRef({ owner: context.repo.owner, repo: context.repo.repo, ref: `refs/${ref}`, sha: context.sha });
-            }
-
-      - name: Publish latest executable
-        if: github.event_name != 'pull_request'
+      - name: Publish versioned release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: latest
-          name: Latest Windows build
-          body: Automatically updated Windows x64 build from the latest successful run on main.
-          prerelease: true
-          make_latest: false
-          overwrite_files: true
+          name: Dota Activity ${{ github.ref_name }}
+          generate_release_notes: true
+          make_latest: true
           files: dist/DotaActivity.exe
