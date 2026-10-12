@@ -22,6 +22,21 @@ class GsiParsingTests(unittest.TestCase):
         self.assertEqual(result["details"], "Axe · 4/2/7 · 8 400 NW")
         self.assertEqual(result["state"], "Ranked All Pick")
 
+    def test_hero_selection_shows_selected_hero(self):
+        result = presence_from_gsi({
+            "map": {"game_state": "DOTA_GAMERULES_STATE_HERO_SELECTION", "game_mode": 22},
+            "hero": {"name": "npc_dota_hero_invoker"},
+        })
+        self.assertEqual(result["status"], "Матч найден")
+        self.assertIn("Invoker", result["details"])
+        self.assertEqual(result["state"], "Ranked All Pick")
+
+    def test_hero_selection_without_hero_keeps_generic_status(self):
+        result = presence_from_gsi({
+            "map": {"game_state": "DOTA_GAMERULES_STATE_HERO_SELECTION"},
+        })
+        self.assertEqual(result["details"], "Выбирает героя")
+
     def test_post_game_state(self):
         result = presence_from_gsi({
             "map": {"game_state": "DOTA_GAMERULES_STATE_POST_GAME", "win_team": "team2"},
@@ -54,6 +69,7 @@ class GsiParsingTests(unittest.TestCase):
         config = gsi_config_text("abc")
         self.assertIn('"uri" "http://127.0.0.1:38174/"', config)
         self.assertNotIn("0.0.0.0", config)
+        self.assertIn('"draft" "1"', config)
 
 
 if __name__ == "__main__":

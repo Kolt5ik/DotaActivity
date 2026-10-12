@@ -37,7 +37,7 @@ jobs:
         run: python -m unittest discover -s tests
 
       - name: Build standalone executable
-        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name DotaActivity --collect-all pypresence app.py
+        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name DotaActivity --collect-all pypresence --collect-all pystray --collect-all PIL app.py
 
       - name: Upload test artifact
         uses: actions/upload-artifact@v4

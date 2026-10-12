@@ -51,12 +51,18 @@ def presence_from_gsi(payload: dict) -> dict | None:
     hero = payload.get("hero") or {}
     state = str(map_data.get("game_state", ""))
     game_time = map_data.get("game_time")
-    hero_name = prettify_hero(str(hero.get("name", "")))
+    hero_raw_name = str(hero.get("name", ""))
+    hero_name = prettify_hero(hero_raw_name)
     mode_id = map_data.get("game_mode")
     mode = GAME_MODES.get(mode_id, "Dota 2") if isinstance(mode_id, int) else "Dota 2"
 
-    if state in {"DOTA_GAMERULES_STATE_HERO_SELECTION", "DOTA_GAMERULES_STATE_PRE_GAME"}:
-        return {"status": "Матч найден", "details": f"Выбирает героя · {mode}", "image": "dota2"}
+    if state == "DOTA_GAMERULES_STATE_HERO_SELECTION":
+        details = f"Выбирает героя · {hero_name}" if hero_raw_name else "Выбирает героя"
+        return {"status": "Матч найден", "details": details, "state": mode, "image": "dota2"}
+
+    if state == "DOTA_GAMERULES_STATE_PRE_GAME":
+        details = f"Готовится к матчу · {hero_name}" if hero_raw_name else "Готовится к матчу"
+        return {"status": "Матч найден", "details": details, "state": mode, "image": "dota2"}
 
     if state == "DOTA_GAMERULES_STATE_GAME_IN_PROGRESS":
         kills, deaths, assists = (player.get(k, 0) for k in ("kills", "deaths", "assists"))
@@ -140,6 +146,7 @@ def gsi_config_text(token: str) -> str:
         "map" "1"
         "player" "1"
         "hero" "1"
+        "draft" "1"
     }}
 }}
 '''
@@ -189,10 +196,11 @@ class DotaActivityApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title(APP_NAME)
-        self.root.geometry("460x310")
-        self.root.minsize(420, 280)
+        self.root.geometry("460x340")
+        self.root.minsize(420, 300)
         self.root.configure(bg="#101116")
         self.rpc = None
+        self.tray_icon = None
         self.server: ThreadingHTTPServer | None = None
         self.events: queue.Queue = queue.Queue()
         GSIHandler.events = self.events
@@ -213,7 +221,7 @@ class DotaActivityApp:
         self.root.after(200, self.try_connect)
         self.root.after(500, self.poll_events)
         self.root.after(5000, self.maintenance)
-        self.root.protocol("WM_DELETE_WINDOW", self.close)
+        self.root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
 
     @staticmethod
     def load_settings() -> dict:
@@ -251,6 +259,7 @@ class DotaActivityApp:
         ttk.Combobox(manual, textvariable=self.manual_var, values=list(GSI_STATES), state="readonly", width=18).pack(side="left", padx=(8, 0))
         ttk.Button(manual, text="Показать", command=self.apply_manual).pack(side="left", padx=(6, 0))
         ttk.Label(main, text="Оставь Dota Activity и Discord запущенными во время игры.", style="Muted.TLabel", wraplength=400).pack(anchor="w", pady=(8, 0))
+        ttk.Button(main, text="Свернуть в трей", command=self.hide_to_tray).pack(anchor="e", pady=(10, 0))
 
     def ensure_gsi(self):
         cfg_dir = find_dota_cfg_dir()
@@ -344,8 +353,43 @@ class DotaActivityApp:
             self.try_connect()
         self.root.after(5000, self.maintenance)
 
-    def close(self):
+    def _create_tray_icon(self):
+        import pystray
+        from PIL import Image, ImageDraw
+
+        image = Image.new("RGBA", (64, 64), (16, 17, 22, 255))
+        draw = ImageDraw.Draw(image)
+        draw.ellipse((7, 7, 57, 57), fill=(232, 64, 54, 255))
+        draw.polygon(((32, 14), (45, 48), (32, 42), (19, 48)), fill=(255, 255, 255, 255))
+        menu = pystray.Menu(
+            pystray.MenuItem("Открыть Dota Activity", lambda _icon, _item: self.root.after(0, self.show_window)),
+            pystray.MenuItem("Выход", lambda _icon, _item: self.root.after(0, self.exit_app)),
+        )
+        self.tray_icon = pystray.Icon("DotaActivity", image, APP_NAME, menu)
+        threading.Thread(target=self.tray_icon.run, name="DotaActivityTray", daemon=True).start()
+
+    def hide_to_tray(self):
+        if self.tray_icon is None:
+            try:
+                self._create_tray_icon()
+            except Exception as exc:
+                from tkinter import messagebox
+                messagebox.showerror("Системный трей", f"Не удалось свернуть приложение в трей.\n\n{exc}")
+                return
+        self.root.withdraw()
+
+    def show_window(self):
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
+
+    def exit_app(self):
         self.save_settings()
+        if self.tray_icon:
+            try:
+                self.tray_icon.stop()
+            except Exception:
+                pass
         if self.rpc:
             try:
                 self.rpc.clear()
