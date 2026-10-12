@@ -263,8 +263,8 @@ class DotaActivityApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title(APP_NAME)
-        self.root.geometry("460x340")
-        self.root.minsize(420, 300)
+        self.root.geometry("440x300")
+        self.root.minsize(380, 280)
         self.root.configure(bg="#101116")
         self.rpc = None
         self.tray_icon = None
@@ -307,26 +307,55 @@ class DotaActivityApp:
         style.theme_use("clam")
         style.configure("TFrame", background="#101116")
         style.configure("TLabel", background="#101116", foreground="#e9e9ef", font=("Segoe UI", 10))
-        style.configure("Title.TLabel", font=("Segoe UI Semibold", 20), foreground="#f4c95d")
+        style.configure("Title.TLabel", font=("Segoe UI Semibold", 17), foreground="#f4c95d")
         style.configure("Muted.TLabel", foreground="#9a9baa", font=("Segoe UI", 9))
-        main = ttk.Frame(self.root, padding=20)
+        style.configure("Action.TButton", font=("Segoe UI Semibold", 9), padding=(10, 6))
+        main = ttk.Frame(self.root, padding=14)
         main.pack(fill="both", expand=True)
-        ttk.Label(main, text="DOTA ACTIVITY", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(main, text="Статус Dota 2 для Discord", style="Muted.TLabel").pack(anchor="w", pady=(0, 16))
-        card = tk.Frame(main, bg="#202230", padx=16, pady=14)
-        card.pack(fill="x", pady=(0, 12))
-        tk.Label(card, text="АКТИВНОСТЬ В DISCORD", bg="#202230", fg="#9a9baa", font=("Segoe UI", 9, "bold")).pack(anchor="w")
-        tk.Label(card, textvariable=self.state_var, bg="#202230", fg="#f3f3f7", font=("Segoe UI Semibold", 15)).pack(anchor="w", pady=(6, 0))
-        tk.Label(card, textvariable=self.details_var, bg="#202230", fg="#c6c7d2", font=("Segoe UI", 10)).pack(anchor="w", pady=(2, 0))
-        tk.Label(card, textvariable=self.status_var, bg="#202230", fg="#f4c95d", font=("Segoe UI", 9)).pack(anchor="w", pady=(8, 0))
-        ttk.Label(main, textvariable=self.gsi_var, style="Muted.TLabel", wraplength=400).pack(anchor="w", pady=(4, 0))
-        manual = ttk.Frame(main)
-        manual.pack(fill="x", pady=(12, 0))
-        ttk.Label(manual, text="Состояние вручную (если Dota его не передала)").pack(side="left", fill="x", expand=True)
-        ttk.Combobox(manual, textvariable=self.manual_var, values=list(GSI_STATES), state="readonly", width=18).pack(side="left", padx=(8, 0))
-        ttk.Button(manual, text="Показать", command=self.apply_manual).pack(side="left", padx=(6, 0))
-        ttk.Label(main, text="Оставь приложение и Discord запущенными во время игры.", style="Muted.TLabel", wraplength=400).pack(anchor="w", pady=(8, 0))
-        ttk.Button(main, text="Свернуть в трей", command=self.hide_to_tray).pack(anchor="e", pady=(10, 0))
+        header = ttk.Frame(main)
+        header.pack(fill="x", pady=(0, 10))
+        ttk.Label(header, text="DOTA ACTIVITY", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(header, text="Статус игры в Discord", style="Muted.TLabel").pack(anchor="w", pady=(1, 0))
+
+        card = tk.Frame(main, bg="#202230", padx=13, pady=11)
+        card.pack(fill="x", pady=(0, 9))
+        tk.Label(card, text="СЕЙЧАС В DISCORD", bg="#202230", fg="#9a9baa", font=("Segoe UI", 8, "bold")).pack(anchor="w")
+        tk.Label(card, textvariable=self.state_var, bg="#202230", fg="#f3f3f7", font=("Segoe UI Semibold", 14)).pack(anchor="w", pady=(3, 0))
+        tk.Label(card, textvariable=self.details_var, bg="#202230", fg="#c6c7d2", font=("Segoe UI", 9)).pack(anchor="w", pady=(1, 0))
+        tk.Label(card, textvariable=self.status_var, bg="#202230", fg="#f4c95d", font=("Segoe UI", 8), wraplength=360, justify="left").pack(anchor="w", pady=(5, 0))
+
+        gsi_panel = tk.Frame(main, bg="#181a21", padx=10, pady=8)
+        gsi_panel.pack(fill="x", pady=(0, 9))
+        tk.Label(gsi_panel, text="DOTA 2", bg="#181a21", fg="#f4c95d", font=("Segoe UI Semibold", 8)).pack(anchor="w")
+        tk.Label(gsi_panel, textvariable=self.gsi_var, bg="#181a21", fg="#b7b9c6", font=("Segoe UI", 8), wraplength=360, justify="left").pack(anchor="w", pady=(2, 0))
+
+        actions = ttk.Frame(main)
+        actions.pack(fill="x")
+        ttk.Button(actions, text="Ручной статус", style="Action.TButton", command=self.open_manual_status).pack(side="left")
+        ttk.Button(actions, text="Свернуть в трей", style="Action.TButton", command=self.hide_to_tray).pack(side="right")
+
+        def resize_wrapped_labels(event):
+            wrap = max(220, event.width - 48)
+            for label in (status_label, gsi_label):
+                label.configure(wraplength=wrap)
+
+        status_label = card.winfo_children()[-1]
+        gsi_label = gsi_panel.winfo_children()[-1]
+        main.bind("<Configure>", resize_wrapped_labels)
+
+    def open_manual_status(self):
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Ручной статус")
+        dialog.geometry("330x150")
+        dialog.resizable(False, False)
+        dialog.configure(bg="#101116")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        body = ttk.Frame(dialog, padding=16)
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text="Выбери статус для Discord").pack(anchor="w", pady=(0, 8))
+        ttk.Combobox(body, textvariable=self.manual_var, values=list(GSI_STATES), state="readonly", width=30).pack(fill="x")
+        ttk.Button(body, text="Показать", style="Action.TButton", command=lambda: (self.apply_manual(), dialog.destroy())).pack(anchor="e", pady=(12, 0))
 
     def ensure_gsi(self):
         cfg_dir = find_dota_cfg_dir()
