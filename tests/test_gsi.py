@@ -1,9 +1,14 @@
 import unittest
+import tempfile
+from pathlib import Path
 
-from app import presence_from_gsi, prettify_hero
+from app import DISCORD_APPLICATION_ID, find_dota_cfg_dir, gsi_config_text, install_gsi_config, presence_from_gsi, prettify_hero, steam_roots_from_vdf
 
 
 class GsiParsingTests(unittest.TestCase):
+    def test_discord_application_id_is_embedded(self):
+        self.assertTrue(DISCORD_APPLICATION_ID.isdigit())
+
     def test_hero_name(self):
         self.assertEqual(prettify_hero("npc_dota_hero_axe"), "Axe")
 
@@ -24,6 +29,31 @@ class GsiParsingTests(unittest.TestCase):
             "hero": {"name": "npc_dota_hero_juggernaut"},
         })
         self.assertIn("Победа", result["details"])
+
+    def test_discovers_dota_in_a_secondary_steam_library(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            steam = Path(temporary) / "Steam"
+            library = Path(temporary) / "Games"
+            cfg = library / "steamapps" / "common" / "dota 2 beta" / "game" / "dota" / "cfg"
+            cfg.mkdir(parents=True)
+            vdf = f'"libraryfolders" {{ "1" {{ "path" "{str(library).replace(chr(92), chr(92)*2)}" }} }}'
+            roots = steam_roots_from_vdf(steam, vdf)
+            self.assertEqual(find_dota_cfg_dir(roots), cfg)
+
+    def test_writes_gsi_config_and_reuses_it(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            cfg = Path(temporary) / "cfg"
+            target = install_gsi_config(cfg, "test-token")
+            self.assertTrue(target.is_file())
+            self.assertIn('"token" "test-token"', target.read_text(encoding="utf-8"))
+            before = target.stat().st_mtime_ns
+            self.assertEqual(install_gsi_config(cfg, "test-token"), target)
+            self.assertEqual(target.stat().st_mtime_ns, before)
+
+    def test_gsi_configuration_uses_localhost(self):
+        config = gsi_config_text("abc")
+        self.assertIn('"uri" "http://127.0.0.1:38174/"', config)
+        self.assertNotIn("0.0.0.0", config)
 
 
 if __name__ == "__main__":
