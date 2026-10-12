@@ -309,6 +309,7 @@ class DotaActivityApp:
         style.configure("TLabel", background="#101116", foreground="#e9e9ef", font=("Segoe UI", 10))
         style.configure("Title.TLabel", font=("Segoe UI Semibold", 17), foreground="#f4c95d")
         style.configure("Muted.TLabel", foreground="#9a9baa", font=("Segoe UI", 9))
+        style.configure("Action.TButton", font=("Segoe UI Semibold", 9), padding=(10, 6))
         main = ttk.Frame(self.root, padding=14)
         main.pack(fill="both", expand=True)
         header = ttk.Frame(main)
@@ -329,14 +330,9 @@ class DotaActivityApp:
         tk.Label(gsi_panel, textvariable=self.gsi_var, bg="#181a21", fg="#b7b9c6", font=("Segoe UI", 8), wraplength=360, justify="left").pack(anchor="w", pady=(2, 0))
 
         actions = ttk.Frame(main)
-        actions.pack(fill="x", pady=(2, 0))
-        actions.columnconfigure((0, 1), weight=1, uniform="actions")
-        self.make_action_button(
-            actions, "Ручной статус", self.open_manual_status
-        ).grid(row=0, column=0, sticky="ew", padx=(0, 5))
-        self.make_action_button(
-            actions, "Свернуть в трей", self.hide_to_tray, primary=True
-        ).grid(row=0, column=1, sticky="ew", padx=(5, 0))
+        actions.pack(fill="x")
+        ttk.Button(actions, text="Ручной статус", style="Action.TButton", command=self.open_manual_status).pack(side="left")
+        ttk.Button(actions, text="Свернуть в трей", style="Action.TButton", command=self.hide_to_tray).pack(side="right")
 
         def resize_wrapped_labels(event):
             wrap = max(220, event.width - 48)
@@ -346,36 +342,6 @@ class DotaActivityApp:
         status_label = card.winfo_children()[-1]
         gsi_label = gsi_panel.winfo_children()[-1]
         main.bind("<Configure>", resize_wrapped_labels)
-
-    @staticmethod
-    def make_action_button(parent, text, command, primary=False):
-        """Build a generously sized, consistent button on every Windows theme."""
-        if primary:
-            background, foreground = "#f4c95d", "#17181d"
-            hover, active = "#ffda72", "#dfb447"
-        else:
-            background, foreground = "#292b37", "#f0f0f4"
-            hover, active = "#373a48", "#22242e"
-        button = tk.Button(
-            parent,
-            text=text,
-            command=command,
-            font=("Segoe UI Semibold", 10),
-            bg=background,
-            fg=foreground,
-            activebackground=active,
-            activeforeground=foreground,
-            relief="flat",
-            borderwidth=0,
-            highlightthickness=0,
-            padx=12,
-            pady=10,
-            cursor="hand2",
-            takefocus=True,
-        )
-        button.bind("<Enter>", lambda _event: button.configure(bg=hover))
-        button.bind("<Leave>", lambda _event: button.configure(bg=background))
-        return button
 
     def open_manual_status(self):
         dialog = tk.Toplevel(self.root)
@@ -389,9 +355,7 @@ class DotaActivityApp:
         body.pack(fill="both", expand=True)
         ttk.Label(body, text="Выбери статус для Discord").pack(anchor="w", pady=(0, 8))
         ttk.Combobox(body, textvariable=self.manual_var, values=list(GSI_STATES), state="readonly", width=30).pack(fill="x")
-        self.make_action_button(
-            body, "Показать", lambda: (self.apply_manual(), dialog.destroy()), primary=True
-        ).pack(fill="x", pady=(12, 0))
+        ttk.Button(body, text="Показать", style="Action.TButton", command=lambda: (self.apply_manual(), dialog.destroy())).pack(anchor="e", pady=(12, 0))
 
     def ensure_gsi(self):
         cfg_dir = find_dota_cfg_dir()
