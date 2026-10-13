@@ -14,6 +14,7 @@ import tkinter as tk
 from tkinter import ttk
 
 APP_NAME = "Dota Activity"
+APP_VERSION = "0.0.5"
 DISCORD_GAME_NAME = "Dota"
 GSI_PORT = 38174
 DISCORD_APPLICATION_ID = "1559228191195922513"
@@ -270,7 +271,7 @@ class GSIHandler(BaseHTTPRequestHandler):
 class DotaActivityApp:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title(APP_NAME)
+        self.root.title(f"{APP_NAME} v{APP_VERSION}")
         self.root.geometry("440x300")
         self.root.minsize(380, 280)
         self.root.configure(bg="#101116")
@@ -331,7 +332,7 @@ class DotaActivityApp:
         title_group = ttk.Frame(brand)
         title_group.pack(side="left", anchor="w")
         ttk.Label(title_group, text="DOTA ACTIVITY", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(title_group, text="Статус игры в Discord", style="Muted.TLabel").pack(anchor="w", pady=(1, 0))
+        ttk.Label(title_group, text="Проект Kolt5ik · статус Dota в Discord", style="Muted.TLabel").pack(anchor="w", pady=(1, 0))
 
         card = tk.Frame(main, bg="#202230", padx=13, pady=11)
         card.pack(fill="x", pady=(0, 9))
