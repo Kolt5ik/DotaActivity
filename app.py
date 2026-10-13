@@ -5,6 +5,7 @@ import os
 import queue
 import re
 import secrets
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -21,6 +22,7 @@ STEAM_ASSET_ROOT = "https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dot
 DOTA_LOGO_URL = "https://raw.githubusercontent.com/Kolt5ik/DotaActivity/feature/discord-presence-polish/assets/dota-logo-square.png"
 APP_DIR = Path(os.environ.get("APPDATA", Path.home())) / "DotaActivity"
 SETTINGS_PATH = APP_DIR / "settings.json"
+APP_ICON_PNG = Path("assets") / "logo_dota.png"
 GSI_FILENAME = "gamestate_integration_dotapresence.cfg"
 GSI_STATES = {
     "Главное меню": ("В главном меню", "Готовится к игре"),
@@ -39,6 +41,12 @@ GAME_MODES = {
     18: "Ability Draft", 19: "Event", 20: "All Random Deathmatch",
     21: "1v1 Mid", 22: "All Pick", 23: "Turbo", 24: "Mutation",
 }
+
+
+def resource_path(relative_path: str | Path) -> Path:
+    """Return a bundled asset path for both source runs and PyInstaller builds."""
+    bundle_dir = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    return bundle_dir / relative_path
 LOBBY_TYPES = {1: "Тренировка", 2: "Турнир", 3: "Обучение", 4: "Против ботов", 7: "Рейтинг"}
 
 
@@ -266,6 +274,8 @@ class DotaActivityApp:
         self.root.geometry("440x300")
         self.root.minsize(380, 280)
         self.root.configure(bg="#101116")
+        self._window_icon = tk.PhotoImage(file=str(resource_path(APP_ICON_PNG)))
+        self.root.iconphoto(True, self._window_icon)
         self.rpc = None
         self.tray_icon = None
         self.server: ThreadingHTTPServer | None = None
@@ -314,8 +324,14 @@ class DotaActivityApp:
         main.pack(fill="both", expand=True)
         header = ttk.Frame(main)
         header.pack(fill="x", pady=(0, 10))
-        ttk.Label(header, text="DOTA ACTIVITY", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(header, text="Статус игры в Discord", style="Muted.TLabel").pack(anchor="w", pady=(1, 0))
+        brand = ttk.Frame(header)
+        brand.pack(anchor="w")
+        self._brand_image = self._window_icon.subsample(32, 32)
+        tk.Label(brand, image=self._brand_image, bg="#101116", borderwidth=0).pack(side="left", padx=(0, 9))
+        title_group = ttk.Frame(brand)
+        title_group.pack(side="left", anchor="w")
+        ttk.Label(title_group, text="DOTA ACTIVITY", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(title_group, text="Статус игры в Discord", style="Muted.TLabel").pack(anchor="w", pady=(1, 0))
 
         card = tk.Frame(main, bg="#202230", padx=13, pady=11)
         card.pack(fill="x", pady=(0, 9))
@@ -349,6 +365,7 @@ class DotaActivityApp:
         dialog.geometry("330x150")
         dialog.resizable(False, False)
         dialog.configure(bg="#101116")
+        dialog.iconphoto(True, self._window_icon)
         dialog.transient(self.root)
         dialog.grab_set()
         body = ttk.Frame(dialog, padding=16)
@@ -453,12 +470,10 @@ class DotaActivityApp:
 
     def _create_tray_icon(self):
         import pystray
-        from PIL import Image, ImageDraw
+        from PIL import Image
 
-        image = Image.new("RGBA", (64, 64), (16, 17, 22, 255))
-        draw = ImageDraw.Draw(image)
-        draw.ellipse((7, 7, 57, 57), fill=(232, 64, 54, 255))
-        draw.polygon(((32, 14), (45, 48), (32, 42), (19, 48)), fill=(255, 255, 255, 255))
+        with Image.open(resource_path(APP_ICON_PNG)) as source:
+            image = source.convert("RGBA").resize((64, 64), Image.Resampling.LANCZOS)
         menu = pystray.Menu(
             pystray.MenuItem("Открыть Dota Activity", lambda _icon, _item: self.root.after(0, self.show_window)),
             pystray.MenuItem("Выход", lambda _icon, _item: self.root.after(0, self.exit_app)),
