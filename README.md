@@ -11,6 +11,12 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/Kolt5ik/DotaActivity/releases/latest"><img src="https://img.shields.io/badge/%E2%86%93%20Download%20for%20Windows-Latest%20release-efbd50?style=for-the-badge&logo=windows&logoColor=161b22&labelColor=efbd50" alt="Download for Windows — latest release"></a>
+  <br>
+  <sub>Windows 10/11 · 64-bit</sub>
+</p>
+
+<p align="center">
   <a href="https://github.com/Kolt5ik/DotaActivity/releases/latest"><img src="https://img.shields.io/github/v/release/Kolt5ik/DotaActivity?label=release" alt="Latest release"></a>
   <a href="https://github.com/Kolt5ik/DotaActivity/actions/workflows/build-windows.yml"><img src="https://github.com/Kolt5ik/DotaActivity/actions/workflows/build-windows.yml/badge.svg?branch=main" alt="Windows build"></a>
   <img src="https://img.shields.io/badge/platform-Windows%20x64-5965f2" alt="Windows x64">
