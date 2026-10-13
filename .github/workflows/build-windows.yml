@@ -25,19 +25,19 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt pyinstaller
 
-      - name: Verify Discord application ID
+      - name: Verify release configuration
         shell: pwsh
         run: |
           $source = Get-Content app.py -Raw
-          if ($source -notmatch 'DISCORD_APPLICATION_ID\s*=\s*"\d+"') {
-            throw "A numeric Discord Application ID must be configured in app.py."
+          if ($source -match 'DISCORD_APPLICATION_ID\s*=\s*"SET_DISCORD_APPLICATION_ID"') {
+            throw "Set the project Discord Application ID before building a release."
           }
 
       - name: Run tests
         run: python -m unittest discover -s tests
 
       - name: Build standalone executable
-        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name DotaActivity --collect-all pypresence app.py
+        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name DotaActivity --icon assets/logo_dota.ico --add-data "assets/logo_dota.png;assets" --collect-all pypresence app.py
 
       - name: Upload test artifact
         uses: actions/upload-artifact@v4
