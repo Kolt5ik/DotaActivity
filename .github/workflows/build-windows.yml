@@ -32,6 +32,12 @@ jobs:
           if ($source -match 'DISCORD_APPLICATION_ID\s*=\s*"SET_DISCORD_APPLICATION_ID"') {
             throw "Set the project Discord Application ID before building a release."
           }
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            $version = [regex]::Match($source, 'APP_VERSION\s*=\s*"(\d+\.\d+\.\d+)"')
+            if (-not $version.Success -or $env:GITHUB_REF_NAME -ne "v$($version.Groups[1].Value)") {
+              throw "Release tag must match APP_VERSION in app.py."
+            }
+          }
 
       - name: Run tests
         run: python -m unittest discover -s tests
@@ -40,12 +46,18 @@ jobs:
         run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name DotaActivity --icon assets/logo_dota.ico --add-data "assets/logo_dota.png;assets" --collect-all pypresence app.py
 
       - name: Upload test artifact
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: DotaActivity-Windows-x64
           path: dist/DotaActivity.exe
           if-no-files-found: error
           retention-days: 30
+
+      - name: Prepare versioned release file
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: Copy-Item dist/DotaActivity.exe "dist/DotaActivity-$env:GITHUB_REF_NAME-Windows-x64.exe"
 
       - name: Publish versioned release
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
@@ -54,4 +66,4 @@ jobs:
           name: Dota Activity ${{ github.ref_name }}
           generate_release_notes: true
           make_latest: true
-          files: dist/DotaActivity.exe
+          files: dist/DotaActivity-${{ github.ref_name }}-Windows-x64.exe
