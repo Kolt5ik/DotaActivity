@@ -1,20 +1,22 @@
 from __future__ import annotations
 
+import csv
 import json
 import os
 import queue
 import re
 import secrets
+import subprocess
 import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
 APP_NAME = "Dota Activity"
-APP_VERSION = "0.0.5"
+APP_VERSION = "0.0.6"
 DISCORD_GAME_NAME = "Dota"
 GSI_PORT = 38174
 DISCORD_APPLICATION_ID = "1559228191195922513"
@@ -25,15 +27,68 @@ APP_DIR = Path(os.environ.get("APPDATA", Path.home())) / "DotaActivity"
 SETTINGS_PATH = APP_DIR / "settings.json"
 APP_ICON_PNG = Path("assets") / "logo_dota.png"
 GSI_FILENAME = "gamestate_integration_dotapresence.cfg"
-GSI_STATES = {
-    "Главное меню": ("В главном меню", "Готовится к игре"),
-    "Поиск матча": ("Ищет матч", "Подбор игры в Dota 2"),
-    "Матч найден": ("Выбирает героя", "Подготовка к матчу"),
-    "В игре": ("Играет в Dota 2", "Матч в процессе"),
-    "После матча": ("Завершил матч", "Смотрит результаты"),
-    "Наблюдение": ("Смотрит матч", "Наблюдает за игрой"),
-    "Приватное лобби": ("В приватном лобби", "Играет с друзьями"),
-}
+WINDOWS_RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+AUTOSTART_NAME = "DotaActivity"
+
+
+def dota_is_listed(tasklist_output: str) -> bool:
+    """Return whether CSV tasklist output contains the Dota 2 process."""
+    try:
+        return any(
+            row and row[0].strip().strip('"').casefold() == "dota2.exe"
+            for row in csv.reader(tasklist_output.splitlines())
+        )
+    except csv.Error:
+        return False
+
+
+def is_dota_running() -> bool:
+    """Check the Windows process list without opening a console window."""
+    if os.name != "nt":
+        return False
+    try:
+        result = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq dota2.exe", "/FO", "CSV", "/NH"],
+            capture_output=True, text=True, check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except OSError:
+        return False
+    return result.returncode == 0 and dota_is_listed(result.stdout)
+
+
+def windows_autostart_command() -> str:
+    """Build a quoted per-user Windows startup command."""
+    if getattr(sys, "frozen", False):
+        args = [sys.executable, "--background"]
+    else:
+        pythonw = Path(sys.executable).with_name("pythonw.exe")
+        executable = pythonw if pythonw.exists() else Path(sys.executable)
+        args = [str(executable), str(Path(__file__).resolve()), "--background"]
+    return subprocess.list2cmdline(args)
+
+
+def windows_autostart_enabled() -> bool:
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, WINDOWS_RUN_KEY) as key:
+            winreg.QueryValueEx(key, AUTOSTART_NAME)
+        return True
+    except (ImportError, OSError):
+        return False
+
+
+def set_windows_autostart(enabled: bool) -> None:
+    import winreg
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, WINDOWS_RUN_KEY) as key:
+        if enabled:
+            winreg.SetValueEx(key, AUTOSTART_NAME, 0, winreg.REG_SZ, windows_autostart_command())
+        else:
+            try:
+                winreg.DeleteValue(key, AUTOSTART_NAME)
+            except FileNotFoundError:
+                pass
+
 GAME_MODES = {
     1: "All Pick", 2: "Captains Mode", 3: "Random Draft", 4: "Single Draft",
     5: "All Random", 7: "Diretide", 8: "Reverse Captains Mode", 9: "Greeviling",
@@ -269,7 +324,7 @@ class GSIHandler(BaseHTTPRequestHandler):
 
 
 class DotaActivityApp:
-    def __init__(self, root: tk.Tk):
+    def __init__(self, root: tk.Tk, start_hidden: bool = False):
         self.root = root
         self.root.title(f"{APP_NAME} v{APP_VERSION}")
         self.root.geometry("440x300")
@@ -287,19 +342,25 @@ class DotaActivityApp:
         self.status_var = tk.StringVar(value="Запуск…")
         self.state_var = tk.StringVar(value="В главном меню")
         self.details_var = tk.StringVar(value="Готовится к игре")
-        self.manual_var = tk.StringVar(value="Главное меню")
         self.gsi_var = tk.StringVar(value="Ищу установленную Dota 2…")
         self.last_presence: dict | None = None
+        self.dota_running = False
+        self.autostart_var = tk.BooleanVar(value=windows_autostart_enabled())
         self.dota_cfg_dir: Path | None = None
         self.last_rpc_attempt = 0.0
         self.build_ui()
         GSIHandler.token = self.gsi_token
         self.ensure_gsi()
         self.start_server()
-        self.root.after(200, self.try_connect)
+        self.state_var.set("Dota не запущена")
+        self.details_var.set("Активность появится при запуске игры")
+        self.status_var.set("Ожидаю запуска Dota 2")
         self.root.after(500, self.poll_events)
-        self.root.after(5000, self.maintenance)
+        self.root.after(250, self.maintenance)
         self.root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
+        if start_hidden:
+            self.root.withdraw()
+            self.root.after(200, self.hide_to_tray)
 
     @staticmethod
     def load_settings() -> dict:
@@ -321,6 +382,7 @@ class DotaActivityApp:
         style.configure("Title.TLabel", font=("Segoe UI Semibold", 17), foreground="#f4c95d")
         style.configure("Muted.TLabel", foreground="#9a9baa", font=("Segoe UI", 9))
         style.configure("Action.TButton", font=("Segoe UI Semibold", 9), padding=(10, 6))
+        style.configure("TCheckbutton", background="#101116", foreground="#b7b9c6", font=("Segoe UI", 9))
         main = ttk.Frame(self.root, padding=14)
         main.pack(fill="both", expand=True)
         header = ttk.Frame(main)
@@ -348,7 +410,10 @@ class DotaActivityApp:
 
         actions = ttk.Frame(main)
         actions.pack(fill="x")
-        ttk.Button(actions, text="Ручной статус", style="Action.TButton", command=self.open_manual_status).pack(side="left")
+        ttk.Checkbutton(
+            actions, text="Автозапуск Windows", variable=self.autostart_var,
+            command=self.toggle_autostart,
+        ).pack(side="left")
         ttk.Button(actions, text="Свернуть в трей", style="Action.TButton", command=self.hide_to_tray).pack(side="right")
 
         def resize_wrapped_labels(event):
@@ -359,21 +424,6 @@ class DotaActivityApp:
         status_label = card.winfo_children()[-1]
         gsi_label = gsi_panel.winfo_children()[-1]
         main.bind("<Configure>", resize_wrapped_labels)
-
-    def open_manual_status(self):
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Ручной статус")
-        dialog.geometry("330x150")
-        dialog.resizable(False, False)
-        dialog.configure(bg="#101116")
-        dialog.iconphoto(True, self._window_icon)
-        dialog.transient(self.root)
-        dialog.grab_set()
-        body = ttk.Frame(dialog, padding=16)
-        body.pack(fill="both", expand=True)
-        ttk.Label(body, text="Выбери статус для Discord").pack(anchor="w", pady=(0, 8))
-        ttk.Combobox(body, textvariable=self.manual_var, values=list(GSI_STATES), state="readonly", width=30).pack(fill="x")
-        ttk.Button(body, text="Показать", style="Action.TButton", command=lambda: (self.apply_manual(), dialog.destroy())).pack(anchor="e", pady=(12, 0))
 
     def ensure_gsi(self):
         cfg_dir = find_dota_cfg_dir()
@@ -399,7 +449,19 @@ class DotaActivityApp:
         except OSError:
             self.status_var.set("Не удалось открыть локальный порт для Dota 2")
 
+    def toggle_autostart(self):
+        enabled = bool(self.autostart_var.get())
+        try:
+            set_windows_autostart(enabled)
+        except (OSError, ImportError) as exc:
+            self.autostart_var.set(not enabled)
+            messagebox.showerror("Автозапуск Windows", f"Не удалось изменить автозапуск.\n\n{exc}")
+            return
+        self.status_var.set("Автозапуск Windows включён" if enabled else "Автозапуск Windows выключен")
+
     def try_connect(self):
+        if not self.dota_running:
+            return
         if self.rpc or time.monotonic() - self.last_rpc_attempt < 5:
             return
         self.last_rpc_attempt = time.monotonic()
@@ -419,6 +481,8 @@ class DotaActivityApp:
             self.status_var.set("Открой настольный Discord · повторное подключение…")
 
     def send_presence(self, data: dict):
+        if not self.dota_running:
+            return
         self.last_presence = data
         self.state_var.set(data.get("status", "Dota 2"))
         self.details_var.set(data.get("details", ""))
@@ -446,11 +510,6 @@ class DotaActivityApp:
             self.rpc = None
             self.last_rpc_attempt = 0
 
-    def apply_manual(self):
-        label = self.manual_var.get()
-        details, state = GSI_STATES.get(label, GSI_STATES["Главное меню"])
-        self.send_presence({"status": label, "details": details, "state": state, "image": "dota2"})
-
     def poll_events(self):
         latest = None
         while True:
@@ -465,9 +524,23 @@ class DotaActivityApp:
     def maintenance(self):
         if self.dota_cfg_dir is None:
             self.ensure_gsi()
-        if self.rpc is None:
+        running = is_dota_running()
+        if running != self.dota_running:
+            self.dota_running = running
+            if running:
+                self.last_rpc_attempt = 0.0
+                self.state_var.set("Главное меню")
+                self.details_var.set("Готовится к игре")
+                self.status_var.set("Dota 2 запущена · подключаюсь к Discord")
+            else:
+                self.disconnect_rpc()
+                self.last_presence = None
+                self.state_var.set("Dota не запущена")
+                self.details_var.set("Активность появится при запуске игры")
+                self.status_var.set("Ожидаю запуска Dota 2")
+        if self.dota_running and self.rpc is None:
             self.try_connect()
-        self.root.after(5000, self.maintenance)
+        self.root.after(2500, self.maintenance)
 
     def _create_tray_icon(self):
         import pystray
@@ -497,6 +570,19 @@ class DotaActivityApp:
         self.root.lift()
         self.root.focus_force()
 
+    def disconnect_rpc(self):
+        rpc, self.rpc = self.rpc, None
+        if rpc is None:
+            return
+        try:
+            rpc.clear()
+        except Exception:
+            pass
+        try:
+            rpc.close()
+        except Exception:
+            pass
+
     def exit_app(self):
         if getattr(self, "_exiting", False):
             return
@@ -512,16 +598,7 @@ class DotaActivityApp:
                 except Exception:
                     pass
                 self.tray_icon = None
-            if self.rpc:
-                rpc, self.rpc = self.rpc, None
-                try:
-                    rpc.clear()
-                except Exception:
-                    pass
-                try:
-                    rpc.close()
-                except Exception:
-                    pass
+            self.disconnect_rpc()
             if self.server:
                 server, self.server = self.server, None
                 try:
@@ -544,7 +621,7 @@ class DotaActivityApp:
 
 def main():
     root = tk.Tk()
-    DotaActivityApp(root)
+    DotaActivityApp(root, start_hidden="--background" in sys.argv[1:])
     root.mainloop()
 
 
