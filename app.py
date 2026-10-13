@@ -23,8 +23,9 @@ DISCORD_GAME_NAME = "Dota"
 GSI_PORT = 38174
 DISCORD_APPLICATION_ID = "1559228191195922513"
 STEAM_ASSET_ROOT = "https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react"
-# A square image is required here: Discord crops large Rich Presence art to a square.
-DOTA_LOGO_URL = "https://raw.githubusercontent.com/Kolt5ik/DotaActivity/main/assets/dota-presence-centered.png"
+# Use the commit that introduced this file so PR builds can load the image
+# before the PR is merged. The commit URL stays valid after the branch is removed.
+DOTA_LOGO_URL = "https://raw.githubusercontent.com/Kolt5ik/DotaActivity/65b8bfb/assets/dota-presence-centered.png"
 APP_DIR = Path(os.environ.get("APPDATA", Path.home())) / "DotaActivity"
 SETTINGS_PATH = APP_DIR / "settings.json"
 APP_ICON_PNG = Path("assets") / "logo_dota.png"
@@ -143,6 +144,12 @@ def initial_language(settings: dict) -> str:
         return "en"
     value = settings.get("language", "en")
     return value if value in TEXT else "en"
+
+
+def tray_menu_labels(language: str) -> tuple[str, str]:
+    """Return localized open and exit labels for the system tray menu."""
+    labels = TEXT.get(language, TEXT["en"])
+    return labels["tray_open"], labels["exit"]
 
 
 UI_STATUS_EN = {
@@ -559,7 +566,23 @@ class DotaActivityApp:
             self.details_var.set(self.ui_text(self.last_presence.get("details", "")))
         self.status_var.set(self.ui_text(self.status_var.get()))
         self.gsi_var.set(self.ui_text(self.gsi_var.get()))
+        self.refresh_tray_menu()
         self.save_settings()
+
+    def refresh_tray_menu(self):
+        if self.tray_icon is None:
+            return
+        self.tray_icon.menu = self.build_tray_menu()
+        self.tray_icon.update_menu()
+
+    def build_tray_menu(self):
+        import pystray
+
+        open_label, exit_label = tray_menu_labels(self.language)
+        return pystray.Menu(
+            pystray.MenuItem(open_label, lambda _icon, _item: self.root.after(0, self.show_window)),
+            pystray.MenuItem(exit_label, lambda _icon, _item: self.root.after(0, self.exit_app)),
+        )
 
     def save_settings(self):
         APP_DIR.mkdir(parents=True, exist_ok=True)
@@ -872,11 +895,7 @@ class DotaActivityApp:
 
         with Image.open(resource_path(APP_ICON_PNG)) as source:
             image = source.convert("RGBA").resize((64, 64), Image.Resampling.LANCZOS)
-        menu = pystray.Menu(
-            pystray.MenuItem(self.tr("tray_open"), lambda _icon, _item: self.root.after(0, self.show_window)),
-            pystray.MenuItem(self.tr("exit"), lambda _icon, _item: self.root.after(0, self.exit_app)),
-        )
-        self.tray_icon = pystray.Icon("DotaActivity", image, APP_NAME, menu)
+        self.tray_icon = pystray.Icon("DotaActivity", image, APP_NAME, self.build_tray_menu())
         threading.Thread(target=self.tray_icon.run, name="DotaActivityTray", daemon=True).start()
 
     def hide_to_tray(self):

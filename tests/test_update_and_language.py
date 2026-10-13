@@ -43,6 +43,10 @@ class UpdateAndLanguageTests(unittest.TestCase):
         self.assertEqual(instance.tr("game_closed"), "Dota is not running")
         self.assertEqual(instance.ui_text("Выбирает героя"), "Picking a hero")
 
+    def test_tray_menu_labels_follow_selected_language(self):
+        self.assertEqual(app.tray_menu_labels("en"), ("Open Dota Activity", "Exit"))
+        self.assertEqual(app.tray_menu_labels("ru"), ("Открыть Dota Activity", "Выход"))
+
 
 if __name__ == "__main__":
     unittest.main()
