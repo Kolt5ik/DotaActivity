@@ -89,15 +89,6 @@ def set_windows_autostart(enabled: bool) -> None:
             except FileNotFoundError:
                 pass
 
-GSI_STATES = {
-    "Главное меню": ("В главном меню", "Готовится к игре"),
-    "Поиск матча": ("Ищет матч", "Подбор игры в Dota 2"),
-    "Матч найден": ("Выбирает героя", "Подготовка к матчу"),
-    "В игре": ("Играет в Dota 2", "Матч в процессе"),
-    "После матча": ("Завершил матч", "Смотрит результаты"),
-    "Наблюдение": ("Смотрит матч", "Наблюдает за игрой"),
-    "Приватное лобби": ("В приватном лобби", "Играет с друзьями"),
-}
 GAME_MODES = {
     1: "All Pick", 2: "Captains Mode", 3: "Random Draft", 4: "Single Draft",
     5: "All Random", 7: "Diretide", 8: "Reverse Captains Mode", 9: "Greeviling",
@@ -336,8 +327,8 @@ class DotaActivityApp:
     def __init__(self, root: tk.Tk, start_hidden: bool = False):
         self.root = root
         self.root.title(f"{APP_NAME} v{APP_VERSION}")
-        self.root.geometry("440x326")
-        self.root.minsize(380, 306)
+        self.root.geometry("440x300")
+        self.root.minsize(380, 280)
         self.root.configure(bg="#101116")
         self._window_icon = tk.PhotoImage(file=str(resource_path(APP_ICON_PNG)))
         self.root.iconphoto(True, self._window_icon)
@@ -351,7 +342,6 @@ class DotaActivityApp:
         self.status_var = tk.StringVar(value="Запуск…")
         self.state_var = tk.StringVar(value="В главном меню")
         self.details_var = tk.StringVar(value="Готовится к игре")
-        self.manual_var = tk.StringVar(value="Главное меню")
         self.gsi_var = tk.StringVar(value="Ищу установленную Dota 2…")
         self.last_presence: dict | None = None
         self.dota_running = False
@@ -420,12 +410,11 @@ class DotaActivityApp:
 
         actions = ttk.Frame(main)
         actions.pack(fill="x")
-        ttk.Button(actions, text="Ручной статус", style="Action.TButton", command=self.open_manual_status).pack(side="left")
-        ttk.Button(actions, text="Свернуть в трей", style="Action.TButton", command=self.hide_to_tray).pack(side="right")
         ttk.Checkbutton(
-            main, text="Запускать вместе с Windows", variable=self.autostart_var,
+            actions, text="Автозапуск Windows", variable=self.autostart_var,
             command=self.toggle_autostart,
-        ).pack(anchor="w", pady=(7, 0))
+        ).pack(side="left")
+        ttk.Button(actions, text="Свернуть в трей", style="Action.TButton", command=self.hide_to_tray).pack(side="right")
 
         def resize_wrapped_labels(event):
             wrap = max(220, event.width - 48)
@@ -435,21 +424,6 @@ class DotaActivityApp:
         status_label = card.winfo_children()[-1]
         gsi_label = gsi_panel.winfo_children()[-1]
         main.bind("<Configure>", resize_wrapped_labels)
-
-    def open_manual_status(self):
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Ручной статус")
-        dialog.geometry("330x150")
-        dialog.resizable(False, False)
-        dialog.configure(bg="#101116")
-        dialog.iconphoto(True, self._window_icon)
-        dialog.transient(self.root)
-        dialog.grab_set()
-        body = ttk.Frame(dialog, padding=16)
-        body.pack(fill="both", expand=True)
-        ttk.Label(body, text="Выбери статус для Discord").pack(anchor="w", pady=(0, 8))
-        ttk.Combobox(body, textvariable=self.manual_var, values=list(GSI_STATES), state="readonly", width=30).pack(fill="x")
-        ttk.Button(body, text="Показать", style="Action.TButton", command=lambda: (self.apply_manual(), dialog.destroy())).pack(anchor="e", pady=(12, 0))
 
     def ensure_gsi(self):
         cfg_dir = find_dota_cfg_dir()
@@ -535,11 +509,6 @@ class DotaActivityApp:
                 pass
             self.rpc = None
             self.last_rpc_attempt = 0
-
-    def apply_manual(self):
-        label = self.manual_var.get()
-        details, state = GSI_STATES.get(label, GSI_STATES["Главное меню"])
-        self.send_presence({"status": label, "details": details, "state": state, "image": "dota2"})
 
     def poll_events(self):
         latest = None
