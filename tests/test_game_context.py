@@ -26,7 +26,7 @@ class GameContextTests(unittest.TestCase):
         self.assertEqual(app.initial_language(settings), "ru")
 
     def test_presence_uses_centered_default_red_dota_logo(self):
-        self.assertTrue(app.DOTA_LOGO_URL.endswith("/assets/dota-presence-centered.png"))
+        self.assertIn("/65b8bfb/assets/dota-presence-centered.png", app.DOTA_LOGO_URL)
 
 
 if __name__ == "__main__":
