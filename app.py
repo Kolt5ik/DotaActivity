@@ -24,13 +24,14 @@ GSI_PORT = 38174
 DISCORD_APPLICATION_ID = "1559228191195922513"
 STEAM_ASSET_ROOT = "https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react"
 # A square image is required here: Discord crops large Rich Presence art to a square.
-DOTA_LOGO_URL = "https://raw.githubusercontent.com/Kolt5ik/DotaActivity/feature/discord-presence-polish/assets/dota-logo-square.png"
+DOTA_LOGO_URL = "https://raw.githubusercontent.com/Kolt5ik/DotaActivity/main/assets/dota-presence-centered.png"
 APP_DIR = Path(os.environ.get("APPDATA", Path.home())) / "DotaActivity"
 SETTINGS_PATH = APP_DIR / "settings.json"
 APP_ICON_PNG = Path("assets") / "logo_dota.png"
 GSI_FILENAME = "gamestate_integration_dotapresence.cfg"
 WINDOWS_RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 AUTOSTART_NAME = "DotaActivity"
+LANGUAGE_SETTINGS_VERSION = 1
 GITHUB_RELEASE_API = "https://api.github.com/repos/Kolt5ik/DotaActivity/releases/latest"
 GITHUB_RELEASE_PREFIX = "https://github.com/Kolt5ik/DotaActivity/releases/download/"
 MAX_UPDATE_BYTES = 250 * 1024 * 1024
@@ -132,6 +133,16 @@ def compare_versions(first: str, second: str) -> int:
         return tuple(map(int, match.groups()))
     a, b = parts(first), parts(second)
     return (a > b) - (a < b)
+
+
+def initial_language(settings: dict) -> str:
+    """Default old installs to English once, then honor saved user choices."""
+    if settings.get("language_settings_version") != LANGUAGE_SETTINGS_VERSION:
+        settings["language_settings_version"] = LANGUAGE_SETTINGS_VERSION
+        settings["language"] = "en"
+        return "en"
+    value = settings.get("language", "en")
+    return value if value in TEXT else "en"
 
 
 UI_STATUS_EN = {
@@ -252,6 +263,20 @@ def hero_asset(raw: str) -> str:
 
 def game_context(map_data: dict, game_state: str = "") -> str:
     """Describe ranked, bot, training, or the known game mode from GSI fields."""
+    mode = map_data.get("game_mode")
+    mode_text = str(mode or "").strip().lower()
+    try:
+        mode_id = int(mode)
+    except (TypeError, ValueError):
+        mode_id = None
+
+    # GSI can report the lobby as ranked while the actual game mode is Turbo.
+    # The game mode is the more specific field and must take precedence here.
+    if mode_id == 23 or "turbo" in mode_text:
+        return "Turbo"
+    if mode_id == 10 or any(word in mode_text for word in ("tutorial", "training", "трен")):
+        return "Тренировка"
+
     lobby = map_data.get("lobby_type")
     lobby_text = str(lobby or "").strip().lower()
     if any(word in lobby_text for word in ("bot", "coop", "co-op")):
@@ -267,18 +292,10 @@ def game_context(map_data: dict, game_state: str = "") -> str:
     if lobby_id in LOBBY_TYPES:
         return LOBBY_TYPES[lobby_id]
 
-    mode = map_data.get("game_mode")
-    mode_text = str(mode or "").strip().lower()
     if any(word in mode_text for word in ("bot", "coop", "co-op")):
         return "Против ботов"
-    if any(word in mode_text for word in ("tutorial", "training", "трен")):
-        return "Тренировка"
     if "rank" in mode_text:
         return "Рейтинг · All Pick"
-    try:
-        mode_id = int(mode)
-    except (TypeError, ValueError):
-        mode_id = None
     if mode_id == 22:
         return "Рейтинг · All Pick"
     if mode_id == 23:
@@ -450,8 +467,8 @@ class DotaActivityApp:
     def __init__(self, root: tk.Tk, start_hidden: bool = False):
         self.root = root
         self.root.title(f"{APP_NAME} v{APP_VERSION}")
-        self.root.geometry("440x330")
-        self.root.minsize(400, 310)
+        self.root.geometry("440x370")
+        self.root.minsize(400, 350)
         self.root.configure(bg="#101116")
         self._window_icon = tk.PhotoImage(file=str(resource_path(APP_ICON_PNG)))
         self.root.iconphoto(True, self._window_icon)
@@ -462,9 +479,9 @@ class DotaActivityApp:
         GSIHandler.events = self.events
         self.settings = self.load_settings()
         self.gsi_token = self.settings.get("gsi_token") or secrets.token_urlsafe(24)
-        self.language = self.settings.get("language", "ru")
-        if self.language not in TEXT:
-            self.language = "ru"
+        # Switch existing installations to English once; after that, preserve
+        # the user's explicit language choice across launches.
+        self.language = initial_language(self.settings)
         self._localized_widgets: list[tuple[tk.Widget, str]] = []
         self.status_var = tk.StringVar(value=self.tr("waiting"))
         self.state_var = tk.StringVar(value=self.tr("game_closed"))
@@ -549,6 +566,7 @@ class DotaActivityApp:
         SETTINGS_PATH.write_text(json.dumps({
             "gsi_token": self.gsi_token,
             "language": self.language,
+            "language_settings_version": LANGUAGE_SETTINGS_VERSION,
             "dismissed_update_version": self.settings.get("dismissed_update_version"),
         }, indent=2), encoding="utf-8")
 
