@@ -10,6 +10,8 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import tkinter as tk
@@ -21,14 +23,153 @@ DISCORD_GAME_NAME = "Dota"
 GSI_PORT = 38174
 DISCORD_APPLICATION_ID = "1559228191195922513"
 STEAM_ASSET_ROOT = "https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react"
-# A square image is required here: Discord crops large Rich Presence art to a square.
-DOTA_LOGO_URL = "https://raw.githubusercontent.com/Kolt5ik/DotaActivity/feature/discord-presence-polish/assets/dota-logo-square.png"
+# Use the commit that introduced this file so PR builds can load the image
+# before the PR is merged. The commit URL stays valid after the branch is removed.
+DOTA_LOGO_URL = "https://raw.githubusercontent.com/Kolt5ik/DotaActivity/65b8bfb/assets/dota-presence-centered.png"
 APP_DIR = Path(os.environ.get("APPDATA", Path.home())) / "DotaActivity"
 SETTINGS_PATH = APP_DIR / "settings.json"
 APP_ICON_PNG = Path("assets") / "logo_dota.png"
 GSI_FILENAME = "gamestate_integration_dotapresence.cfg"
 WINDOWS_RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 AUTOSTART_NAME = "DotaActivity"
+LANGUAGE_SETTINGS_VERSION = 1
+GITHUB_RELEASE_API = "https://api.github.com/repos/Kolt5ik/DotaActivity/releases/latest"
+GITHUB_RELEASE_PREFIX = "https://github.com/Kolt5ik/DotaActivity/releases/download/"
+MAX_UPDATE_BYTES = 250 * 1024 * 1024
+
+TEXT = {
+    "ru": {
+        "window_title": "Dota Activity", "brand_subtitle": "Проект Kolt5ik · статус Dota в Discord",
+        "presence_header": "СЕЙЧАС В DISCORD", "game_closed": "Dota не запущена",
+        "game_closed_details": "Активность появится при запуске игры", "gsi_title": "DOTA 2",
+        "autostart": "Автозапуск Windows", "tray": "Свернуть в трей",
+        "tray_open": "Открыть Dota Activity", "exit": "Выход",
+        "language": "Язык", "check_updates": "Проверить обновления",
+        "footnote": "Оставь приложение и Discord запущенными во время игры.",
+        "waiting": "Ожидаю запуска Dota 2", "game_started": "Dota 2 запущена · подключаюсь к Discord",
+        "rpc_connected": "Подключено к Discord", "rpc_wait": "Открой настольный Discord · повторное подключение…",
+        "rpc_published": "Статус Dota 2 опубликован в Discord", "rpc_lost": "Потеряна связь с Discord · переподключаюсь…",
+        "server_ready": "Локальное подключение готово · ожидаю Discord", "server_error": "Не удалось открыть локальный порт для Dota 2",
+        "steam_search": "Ищу Dota 2 в библиотеках Steam…", "dota_found": "Dota 2 найдена · GSI настроен автоматически ({library})",
+        "gsi_error": "Не удалось настроить Dota 2: {error}", "autostart_enabled": "Автозапуск Windows включён",
+        "autostart_disabled": "Автозапуск Windows выключен", "autostart_error_title": "Автозапуск Windows",
+        "autostart_error": "Не удалось изменить автозапуск.\n\n{error}", "tray_error_title": "Системный трей",
+        "tray_error": "Не удалось свернуть приложение в трей.\n\n{error}",
+        "update_checking": "Проверяю обновления…", "update_current": "Установлена последняя версия ({version})",
+        "update_downloading": "Скачиваю обновление…", "update_available": "Доступна версия {version}",
+        "update_unavailable": "Не удалось проверить обновления. Проверь подключение к интернету.",
+        "update_error_title": "Проверка обновлений", "update_found_title": "Доступно обновление",
+        "update_prompt": "Доступна Dota Activity {version}. Скачать обновление?\n\n{notes}",
+        "update_none_title": "Обновлений нет", "update_none": "У тебя установлена последняя версия ({version}).",
+        "update_download_title": "Загрузка обновления", "update_download_error": "Не удалось скачать обновление:\n\n{error}",
+        "update_downloaded_title": "Обновление скачано",
+        "update_downloaded": "Файл сохранён сюда:\n{path}\n\nЗакрой Dota Activity и запусти скачанный файл.",
+        "update_invalid": "GitHub вернул некорректные данные о последнем релизе.",
+        "activity_default": "В главном меню", "activity_details": "Готовится к игре",
+    },
+    "en": {
+        "window_title": "Dota Activity", "brand_subtitle": "Kolt5ik project · Dota status for Discord",
+        "presence_header": "CURRENT DISCORD STATUS", "game_closed": "Dota is not running",
+        "game_closed_details": "Activity will appear when the game starts", "gsi_title": "DOTA 2",
+        "autostart": "Start with Windows", "tray": "Minimize to tray",
+        "tray_open": "Open Dota Activity", "exit": "Exit",
+        "language": "Language", "check_updates": "Check for updates",
+        "footnote": "Keep the app and Discord running while you play.",
+        "waiting": "Waiting for Dota 2", "game_started": "Dota 2 is running · connecting to Discord",
+        "rpc_connected": "Connected to Discord", "rpc_wait": "Open the Discord desktop app · reconnecting…",
+        "rpc_published": "Dota 2 status posted to Discord", "rpc_lost": "Discord connection lost · reconnecting…",
+        "server_ready": "Local connection ready · waiting for Discord", "server_error": "Could not open the local Dota 2 port",
+        "steam_search": "Looking for Dota 2 in Steam libraries…", "dota_found": "Dota 2 found · GSI configured automatically ({library})",
+        "gsi_error": "Could not configure Dota 2: {error}", "autostart_enabled": "Windows startup enabled",
+        "autostart_disabled": "Windows startup disabled", "autostart_error_title": "Windows startup",
+        "autostart_error": "Could not change the startup setting.\n\n{error}", "tray_error_title": "System tray",
+        "tray_error": "Could not minimize the app to the tray.\n\n{error}",
+        "update_checking": "Checking for updates…", "update_current": "You have the latest version ({version})",
+        "update_downloading": "Downloading update…", "update_available": "Version {version} is available",
+        "update_unavailable": "Could not check for updates. Check your internet connection.",
+        "update_error_title": "Update check", "update_found_title": "Update available",
+        "update_prompt": "Dota Activity {version} is available. Download it?\n\n{notes}",
+        "update_none_title": "No updates", "update_none": "You have the latest version ({version}).",
+        "update_download_title": "Downloading update", "update_download_error": "Could not download the update:\n\n{error}",
+        "update_downloaded_title": "Update downloaded",
+        "update_downloaded": "The file was saved here:\n{path}\n\nClose Dota Activity and run the downloaded file.",
+        "update_invalid": "GitHub returned invalid information about the latest release.",
+        "activity_default": "Main menu", "activity_details": "Getting ready to play",
+    },
+}
+
+
+def parse_release_update(release: dict, current_version: str = APP_VERSION) -> dict | None:
+    """Validate GitHub's latest release and return a newer Windows asset, if present."""
+    if not isinstance(release, dict) or release.get("draft") or release.get("prerelease"):
+        return None
+    tag = release.get("tag_name", "")
+    match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", tag)
+    current = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", current_version)
+    if not match or not current:
+        return None
+    version = tuple(map(int, match.groups()))
+    if version <= tuple(map(int, current.groups())):
+        return None
+    asset_name = f"DotaActivity-v{match.group(0).removeprefix('v')}-Windows-x64.exe"
+    assets = release.get("assets")
+    if not isinstance(assets, list):
+        return None
+    for asset in assets:
+        if not isinstance(asset, dict) or asset.get("name") != asset_name:
+            continue
+        url = asset.get("browser_download_url", "")
+        if isinstance(url, str) and url.startswith(GITHUB_RELEASE_PREFIX):
+            return {"version": match.group(0).removeprefix("v"), "url": url,
+                    "name": asset_name, "notes": str(release.get("body") or "").strip()}
+    return None
+
+
+def compare_versions(first: str, second: str) -> int:
+    """Compare two three-part versions; return -1, 0, or 1."""
+    def parts(value: str) -> tuple[int, int, int]:
+        match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", value)
+        if not match:
+            raise ValueError("Expected a version in MAJOR.MINOR.PATCH format")
+        return tuple(map(int, match.groups()))
+    a, b = parts(first), parts(second)
+    return (a > b) - (a < b)
+
+
+def initial_language(settings: dict) -> str:
+    """Default old installs to English once, then honor saved user choices."""
+    if settings.get("language_settings_version") != LANGUAGE_SETTINGS_VERSION:
+        settings["language_settings_version"] = LANGUAGE_SETTINGS_VERSION
+        settings["language"] = "en"
+        return "en"
+    value = settings.get("language", "en")
+    return value if value in TEXT else "en"
+
+
+def tray_menu_labels(language: str) -> tuple[str, str]:
+    """Return localized open and exit labels for the system tray menu."""
+    labels = TEXT.get(language, TEXT["en"])
+    return labels["tray_open"], labels["exit"]
+
+
+UI_STATUS_EN = {
+    "Dota не запущена": "Dota is not running", "Выбирает героя": "Picking a hero",
+    "Подготовка к матчу": "Preparing for a match", "В игре": "In game",
+    "После матча": "Post-game", "Рейтинг · All Pick": "Ranked · All Pick",
+    "Рейтинг": "Ranked", "Против ботов": "Vs. bots", "Тренировка": "Practice",
+    "Обычная игра · All Pick": "Normal game · All Pick", "Обычная игра": "Normal game",
+    "Турнир": "Tournament", "Обучение": "Tutorial", "Главное меню": "Main menu",
+    "Активность появится при запуске игры": "Activity will appear when the game starts",
+    "Готовится к игре": "Getting ready to play", "Матч скоро начнётся": "Match starting soon",
+    "Победа": "Victory", "Матч завершён": "Match complete",
+    "Ожидаю запуска Dota 2": "Waiting for Dota 2", "Локальное подключение готово · ожидаю Discord": "Local connection ready · waiting for Discord",
+    "Не удалось открыть локальный порт для Dota 2": "Could not open the local Dota 2 port",
+    "Dota 2 запущена · подключаюсь к Discord": "Dota 2 is running · connecting to Discord",
+    "Подключено к Discord": "Connected to Discord", "Открой настольный Discord · повторное подключение…": "Open the Discord desktop app · reconnecting…",
+    "Статус Dota 2 опубликован в Discord": "Dota 2 status posted to Discord",
+    "Потеряна связь с Discord · переподключаюсь…": "Discord connection lost · reconnecting…",
+    "Ищу Dota 2 в библиотеках Steam…": "Looking for Dota 2 in Steam libraries…",
+}
 
 
 def dota_is_listed(tasklist_output: str) -> bool:
@@ -129,6 +270,20 @@ def hero_asset(raw: str) -> str:
 
 def game_context(map_data: dict, game_state: str = "") -> str:
     """Describe ranked, bot, training, or the known game mode from GSI fields."""
+    mode = map_data.get("game_mode")
+    mode_text = str(mode or "").strip().lower()
+    try:
+        mode_id = int(mode)
+    except (TypeError, ValueError):
+        mode_id = None
+
+    # GSI can report the lobby as ranked while the actual game mode is Turbo.
+    # The game mode is the more specific field and must take precedence here.
+    if mode_id == 23 or "turbo" in mode_text:
+        return "Turbo"
+    if mode_id == 10 or any(word in mode_text for word in ("tutorial", "training", "трен")):
+        return "Тренировка"
+
     lobby = map_data.get("lobby_type")
     lobby_text = str(lobby or "").strip().lower()
     if any(word in lobby_text for word in ("bot", "coop", "co-op")):
@@ -144,18 +299,10 @@ def game_context(map_data: dict, game_state: str = "") -> str:
     if lobby_id in LOBBY_TYPES:
         return LOBBY_TYPES[lobby_id]
 
-    mode = map_data.get("game_mode")
-    mode_text = str(mode or "").strip().lower()
     if any(word in mode_text for word in ("bot", "coop", "co-op")):
         return "Против ботов"
-    if any(word in mode_text for word in ("tutorial", "training", "трен")):
-        return "Тренировка"
     if "rank" in mode_text:
         return "Рейтинг · All Pick"
-    try:
-        mode_id = int(mode)
-    except (TypeError, ValueError):
-        mode_id = None
     if mode_id == 22:
         return "Рейтинг · All Pick"
     if mode_id == 23:
@@ -327,8 +474,8 @@ class DotaActivityApp:
     def __init__(self, root: tk.Tk, start_hidden: bool = False):
         self.root = root
         self.root.title(f"{APP_NAME} v{APP_VERSION}")
-        self.root.geometry("440x300")
-        self.root.minsize(380, 280)
+        self.root.geometry("440x370")
+        self.root.minsize(400, 350)
         self.root.configure(bg="#101116")
         self._window_icon = tk.PhotoImage(file=str(resource_path(APP_ICON_PNG)))
         self.root.iconphoto(True, self._window_icon)
@@ -339,24 +486,32 @@ class DotaActivityApp:
         GSIHandler.events = self.events
         self.settings = self.load_settings()
         self.gsi_token = self.settings.get("gsi_token") or secrets.token_urlsafe(24)
-        self.status_var = tk.StringVar(value="Запуск…")
-        self.state_var = tk.StringVar(value="В главном меню")
-        self.details_var = tk.StringVar(value="Готовится к игре")
-        self.gsi_var = tk.StringVar(value="Ищу установленную Dota 2…")
+        # Switch existing installations to English once; after that, preserve
+        # the user's explicit language choice across launches.
+        self.language = initial_language(self.settings)
+        self._localized_widgets: list[tuple[tk.Widget, str]] = []
+        self.status_var = tk.StringVar(value=self.tr("waiting"))
+        self.state_var = tk.StringVar(value=self.tr("game_closed"))
+        self.details_var = tk.StringVar(value=self.tr("game_closed_details"))
+        self.gsi_var = tk.StringVar(value=self.tr("steam_search"))
+        self.language_var = tk.StringVar(value="Русский" if self.language == "ru" else "English")
         self.last_presence: dict | None = None
         self.dota_running = False
         self.autostart_var = tk.BooleanVar(value=windows_autostart_enabled())
+        self.update_check_running = False
+        self.latest_available_version: str | None = None
         self.dota_cfg_dir: Path | None = None
         self.last_rpc_attempt = 0.0
         self.build_ui()
         GSIHandler.token = self.gsi_token
         self.ensure_gsi()
         self.start_server()
-        self.state_var.set("Dota не запущена")
-        self.details_var.set("Активность появится при запуске игры")
-        self.status_var.set("Ожидаю запуска Dota 2")
+        self.state_var.set(self.tr("game_closed"))
+        self.details_var.set(self.tr("game_closed_details"))
+        self.status_var.set(self.tr("waiting"))
         self.root.after(500, self.poll_events)
         self.root.after(250, self.maintenance)
+        self.root.after(1800, lambda: self.check_for_updates(manual=False))
         self.root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
         if start_hidden:
             self.root.withdraw()
@@ -370,9 +525,73 @@ class DotaActivityApp:
         except (OSError, json.JSONDecodeError):
             return {}
 
+    def tr(self, key: str, **values) -> str:
+        language = getattr(self, "language", "ru")
+        return TEXT[language][key].format(**values)
+
+    def ui_text(self, value: str) -> str:
+        if self.language == "en":
+            if value.startswith("Dota 2 найдена · GSI настроен автоматически ("):
+                library = value.removeprefix("Dota 2 найдена · GSI настроен автоматически (").removesuffix(")")
+                return f"Dota 2 found · GSI configured automatically ({library})"
+            if value.startswith("Не удалось настроить Dota 2: "):
+                return value.replace("Не удалось настроить Dota 2: ", "Could not configure Dota 2: ", 1)
+            return UI_STATUS_EN.get(value, value)
+        reverse = {english: russian for russian, english in UI_STATUS_EN.items()}
+        if value.startswith("Dota 2 found · GSI configured automatically ("):
+            library = value.removeprefix("Dota 2 found · GSI configured automatically (").removesuffix(")")
+            return f"Dota 2 найдена · GSI настроен автоматически ({library})"
+        if value.startswith("Could not configure Dota 2: "):
+            return value.replace("Could not configure Dota 2: ", "Не удалось настроить Dota 2: ", 1)
+        return reverse.get(value, value)
+
+    def localized(self, widget: tk.Widget, key: str):
+        self._localized_widgets.append((widget, key))
+        widget.configure(text=self.tr(key))
+        return widget
+
+    def change_language(self, _event=None):
+        self.language = "en" if self.language_var.get() == "English" else "ru"
+        for widget, key in self._localized_widgets:
+            try:
+                widget.configure(text=self.tr(key))
+            except tk.TclError:
+                pass
+        self.root.title(self.tr("window_title") + f" v{APP_VERSION}")
+        if not self.dota_running:
+            self.state_var.set(self.tr("game_closed"))
+            self.details_var.set(self.tr("game_closed_details"))
+        elif self.last_presence:
+            self.state_var.set(self.ui_text(self.last_presence.get("status", "Dota")))
+            self.details_var.set(self.ui_text(self.last_presence.get("details", "")))
+        self.status_var.set(self.ui_text(self.status_var.get()))
+        self.gsi_var.set(self.ui_text(self.gsi_var.get()))
+        self.refresh_tray_menu()
+        self.save_settings()
+
+    def refresh_tray_menu(self):
+        if self.tray_icon is None:
+            return
+        self.tray_icon.menu = self.build_tray_menu()
+        self.tray_icon.update_menu()
+
+    def build_tray_menu(self):
+        import pystray
+
+        open_label, exit_label = tray_menu_labels(self.language)
+        return pystray.Menu(
+            pystray.MenuItem(open_label, lambda _icon, _item: self.root.after(0, self.show_window)),
+            pystray.MenuItem(exit_label, lambda _icon, _item: self.root.after(0, self.exit_app)),
+        )
+
     def save_settings(self):
         APP_DIR.mkdir(parents=True, exist_ok=True)
-        SETTINGS_PATH.write_text(json.dumps({"gsi_token": self.gsi_token}, indent=2), encoding="utf-8")
+        SETTINGS_PATH.write_text(json.dumps({
+            "gsi_token": self.gsi_token,
+            "language": self.language,
+            "language_settings_version": LANGUAGE_SETTINGS_VERSION,
+            "dismissed_update_version": self.settings.get("dismissed_update_version"),
+        }, indent=2), encoding="utf-8")
 
     def build_ui(self):
         style = ttk.Style()
@@ -394,27 +613,43 @@ class DotaActivityApp:
         title_group = ttk.Frame(brand)
         title_group.pack(side="left", anchor="w")
         ttk.Label(title_group, text="DOTA ACTIVITY", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(title_group, text="Проект Kolt5ik · статус Dota в Discord", style="Muted.TLabel").pack(anchor="w", pady=(1, 0))
+        self.localized(ttk.Label(title_group, style="Muted.TLabel"), "brand_subtitle").pack(anchor="w", pady=(1, 0))
 
         card = tk.Frame(main, bg="#202230", padx=13, pady=11)
         card.pack(fill="x", pady=(0, 9))
-        tk.Label(card, text="СЕЙЧАС В DISCORD", bg="#202230", fg="#9a9baa", font=("Segoe UI", 8, "bold")).pack(anchor="w")
+        self.localized(tk.Label(card, bg="#202230", fg="#9a9baa", font=("Segoe UI", 8, "bold")), "presence_header").pack(anchor="w")
         tk.Label(card, textvariable=self.state_var, bg="#202230", fg="#f3f3f7", font=("Segoe UI Semibold", 14)).pack(anchor="w", pady=(3, 0))
         tk.Label(card, textvariable=self.details_var, bg="#202230", fg="#c6c7d2", font=("Segoe UI", 9)).pack(anchor="w", pady=(1, 0))
         tk.Label(card, textvariable=self.status_var, bg="#202230", fg="#f4c95d", font=("Segoe UI", 8), wraplength=360, justify="left").pack(anchor="w", pady=(5, 0))
 
         gsi_panel = tk.Frame(main, bg="#181a21", padx=10, pady=8)
         gsi_panel.pack(fill="x", pady=(0, 9))
-        tk.Label(gsi_panel, text="DOTA 2", bg="#181a21", fg="#f4c95d", font=("Segoe UI Semibold", 8)).pack(anchor="w")
+        self.localized(tk.Label(gsi_panel, bg="#181a21", fg="#f4c95d", font=("Segoe UI Semibold", 8)), "gsi_title").pack(anchor="w")
         tk.Label(gsi_panel, textvariable=self.gsi_var, bg="#181a21", fg="#b7b9c6", font=("Segoe UI", 8), wraplength=360, justify="left").pack(anchor="w", pady=(2, 0))
 
         actions = ttk.Frame(main)
         actions.pack(fill="x")
-        ttk.Checkbutton(
-            actions, text="Автозапуск Windows", variable=self.autostart_var,
+        self.localized(ttk.Checkbutton(
+            actions, variable=self.autostart_var,
             command=self.toggle_autostart,
-        ).pack(side="left")
-        ttk.Button(actions, text="Свернуть в трей", style="Action.TButton", command=self.hide_to_tray).pack(side="right")
+        ), "autostart").pack(side="left")
+        self.localized(ttk.Button(actions, style="Action.TButton", command=self.hide_to_tray), "tray").pack(side="right")
+
+        footer = ttk.Frame(main)
+        footer.pack(fill="x", pady=(8, 0))
+        language_row = ttk.Frame(footer)
+        language_row.pack(side="left")
+        self.localized(ttk.Label(language_row, style="Muted.TLabel"), "language").pack(side="left")
+        language_box = ttk.Combobox(
+            language_row, textvariable=self.language_var, values=("Русский", "English"),
+            state="readonly", width=9,
+        )
+        language_box.pack(side="left", padx=(6, 0))
+        language_box.bind("<<ComboboxSelected>>", self.change_language)
+        self.update_button = self.localized(ttk.Button(
+            footer, style="Action.TButton", command=lambda: self.check_for_updates(manual=True),
+        ), "check_updates")
+        self.update_button.pack(side="right")
 
         def resize_wrapped_labels(event):
             wrap = max(220, event.width - 48)
@@ -425,29 +660,141 @@ class DotaActivityApp:
         gsi_label = gsi_panel.winfo_children()[-1]
         main.bind("<Configure>", resize_wrapped_labels)
 
+    def check_for_updates(self, manual: bool = False):
+        if self.update_check_running:
+            return
+        self.update_check_running = True
+        self.status_var.set(self.tr("update_checking"))
+        update_button = getattr(self, "update_button", None)
+        if update_button:
+            update_button.configure(state="disabled")
+
+        def worker():
+            update = None
+            error = None
+            current_release = False
+            try:
+                request = urllib.request.Request(
+                    GITHUB_RELEASE_API,
+                    headers={"Accept": "application/vnd.github+json", "User-Agent": "DotaActivity-Updater"},
+                )
+                with urllib.request.urlopen(request, timeout=8) as response:
+                    release = json.loads(response.read(2_000_000))
+                tag = release.get("tag_name", "") if isinstance(release, dict) else ""
+                if not re.fullmatch(r"v?\d+\.\d+\.\d+", tag):
+                    raise ValueError("Invalid release version")
+                if compare_versions(tag, APP_VERSION) <= 0:
+                    current_release = True
+                else:
+                    update = parse_release_update(release)
+                    if update is None:
+                        raise ValueError("The release does not contain the expected Windows executable")
+            except (OSError, ValueError, json.JSONDecodeError, urllib.error.URLError) as exc:
+                error = exc
+            self.root.after(0, lambda: self.finish_update_check(update, error, current_release, manual))
+
+        threading.Thread(target=worker, name="DotaActivityUpdateCheck", daemon=True).start()
+
+    def finish_update_check(self, update: dict | None, error: Exception | None, current: bool, manual: bool):
+        self.update_check_running = False
+        if getattr(self, "update_button", None):
+            self.update_button.configure(state="normal")
+        if error:
+            self.status_var.set(self.tr("update_unavailable"))
+            if manual:
+                messagebox.showerror(self.tr("update_error_title"), self.tr("update_unavailable"))
+            return
+        if current or update is None:
+            self.status_var.set(self.tr("update_current", version=APP_VERSION))
+            if manual:
+                messagebox.showinfo(self.tr("update_none_title"), self.tr("update_none", version=APP_VERSION))
+            return
+
+        self.latest_available_version = update["version"]
+        if not manual and self.settings.get("dismissed_update_version") == update["version"]:
+            return
+        notes = update.get("notes", "")[:800] or ("Нет описания релиза." if self.language == "ru" else "No release notes.")
+        accepted = messagebox.askyesno(
+            self.tr("update_found_title"),
+            self.tr("update_prompt", version=update["version"], notes=notes),
+        )
+        if accepted:
+            self.download_update(update)
+        else:
+            self.settings["dismissed_update_version"] = update["version"]
+            self.save_settings()
+            self.status_var.set(self.tr("update_available", version=update["version"]))
+
+    def download_update(self, update: dict):
+        self.status_var.set(self.tr("update_downloading"))
+        if getattr(self, "update_button", None):
+            self.update_button.configure(state="disabled")
+
+        def worker():
+            path = None
+            error = None
+            temporary = None
+            try:
+                download_dir = Path.home() / "Downloads"
+                download_dir.mkdir(parents=True, exist_ok=True)
+                path = download_dir / update["name"]
+                temporary = path.with_suffix(path.suffix + ".part")
+                request = urllib.request.Request(update["url"], headers={"User-Agent": "DotaActivity-Updater"})
+                total = 0
+                with urllib.request.urlopen(request, timeout=30) as response, temporary.open("wb") as output:
+                    while True:
+                        block = response.read(1024 * 1024)
+                        if not block:
+                            break
+                        total += len(block)
+                        if total > MAX_UPDATE_BYTES:
+                            raise ValueError("Update file exceeds the 250 MB limit")
+                        output.write(block)
+                if total == 0:
+                    raise ValueError("Downloaded file is empty")
+                os.replace(temporary, path)
+            except (OSError, ValueError, urllib.error.URLError) as exc:
+                error = exc
+                if temporary:
+                    try:
+                        temporary.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+            self.root.after(0, lambda: self.finish_update_download(path, error))
+
+        threading.Thread(target=worker, name="DotaActivityUpdateDownload", daemon=True).start()
+
+    def finish_update_download(self, path: Path | None, error: Exception | None):
+        if getattr(self, "update_button", None):
+            self.update_button.configure(state="normal")
+        if error or path is None:
+            messagebox.showerror(self.tr("update_download_title"), self.tr("update_download_error", error=error))
+            return
+        messagebox.showinfo(self.tr("update_downloaded_title"), self.tr("update_downloaded", path=path))
+
     def ensure_gsi(self):
         cfg_dir = find_dota_cfg_dir()
         if cfg_dir is None:
             self.dota_cfg_dir = None
-            self.gsi_var.set("Ищу Dota 2 в библиотеках Steam…")
+            self.gsi_var.set(self.tr("steam_search"))
             return
         try:
             target = install_gsi_config(cfg_dir, self.gsi_token)
             self.dota_cfg_dir = cfg_dir
-            self.gsi_var.set(f"Dota 2 найдена · GSI настроен автоматически ({target.parent.parent.parent.name})")
+            self.gsi_var.set(self.tr("dota_found", library=target.parent.parent.parent.name))
             self.save_settings()
         except OSError as exc:
             self.dota_cfg_dir = None
-            self.gsi_var.set(f"Не удалось настроить Dota 2: {exc}")
+            self.gsi_var.set(self.tr("gsi_error", error=exc))
 
     def start_server(self):
         GSIHandler.token = self.gsi_token
         try:
             self.server = ThreadingHTTPServer(("127.0.0.1", GSI_PORT), GSIHandler)
             threading.Thread(target=self.server.serve_forever, daemon=True).start()
-            self.status_var.set("Локальное подключение готово · ожидаю Discord")
+            self.status_var.set(self.tr("server_ready"))
         except OSError:
-            self.status_var.set("Не удалось открыть локальный порт для Dota 2")
+            self.status_var.set(self.tr("server_error"))
 
     def toggle_autostart(self):
         enabled = bool(self.autostart_var.get())
@@ -455,9 +802,9 @@ class DotaActivityApp:
             set_windows_autostart(enabled)
         except (OSError, ImportError) as exc:
             self.autostart_var.set(not enabled)
-            messagebox.showerror("Автозапуск Windows", f"Не удалось изменить автозапуск.\n\n{exc}")
+            messagebox.showerror(self.tr("autostart_error_title"), self.tr("autostart_error", error=exc))
             return
-        self.status_var.set("Автозапуск Windows включён" if enabled else "Автозапуск Windows выключен")
+        self.status_var.set(self.tr("autostart_enabled" if enabled else "autostart_disabled"))
 
     def try_connect(self):
         if not self.dota_running:
@@ -474,18 +821,18 @@ class DotaActivityApp:
             rpc = Presence(app_id)
             rpc.connect()
             self.rpc = rpc
-            self.status_var.set("Подключено к Discord")
+            self.status_var.set(self.tr("rpc_connected"))
             self.send_presence({"status": "Главное меню", "details": "Готовится к игре", "image": "dota2"})
         except Exception:
             self.rpc = None
-            self.status_var.set("Открой настольный Discord · повторное подключение…")
+            self.status_var.set(self.tr("rpc_wait"))
 
     def send_presence(self, data: dict):
         if not self.dota_running:
             return
         self.last_presence = data
-        self.state_var.set(data.get("status", "Dota 2"))
-        self.details_var.set(data.get("details", ""))
+        self.state_var.set(self.ui_text(data.get("status", "Dota 2")))
+        self.details_var.set(self.ui_text(data.get("details", "")))
         if not self.rpc:
             return
         try:
@@ -500,9 +847,9 @@ class DotaActivityApp:
             if data.get("start"):
                 kwargs["start"] = data["start"]
             self.rpc.update(**kwargs)
-            self.status_var.set("Статус Dota 2 опубликован в Discord")
+            self.status_var.set(self.tr("rpc_published"))
         except Exception:
-            self.status_var.set("Потеряна связь с Discord · переподключаюсь…")
+            self.status_var.set(self.tr("rpc_lost"))
             try:
                 self.rpc.close()
             except Exception:
@@ -529,15 +876,15 @@ class DotaActivityApp:
             self.dota_running = running
             if running:
                 self.last_rpc_attempt = 0.0
-                self.state_var.set("Главное меню")
-                self.details_var.set("Готовится к игре")
-                self.status_var.set("Dota 2 запущена · подключаюсь к Discord")
+                self.state_var.set(self.tr("activity_default"))
+                self.details_var.set(self.tr("activity_details"))
+                self.status_var.set(self.tr("game_started"))
             else:
                 self.disconnect_rpc()
                 self.last_presence = None
-                self.state_var.set("Dota не запущена")
-                self.details_var.set("Активность появится при запуске игры")
-                self.status_var.set("Ожидаю запуска Dota 2")
+                self.state_var.set(self.tr("game_closed"))
+                self.details_var.set(self.tr("game_closed_details"))
+                self.status_var.set(self.tr("waiting"))
         if self.dota_running and self.rpc is None:
             self.try_connect()
         self.root.after(2500, self.maintenance)
@@ -548,11 +895,7 @@ class DotaActivityApp:
 
         with Image.open(resource_path(APP_ICON_PNG)) as source:
             image = source.convert("RGBA").resize((64, 64), Image.Resampling.LANCZOS)
-        menu = pystray.Menu(
-            pystray.MenuItem("Открыть Dota Activity", lambda _icon, _item: self.root.after(0, self.show_window)),
-            pystray.MenuItem("Выход", lambda _icon, _item: self.root.after(0, self.exit_app)),
-        )
-        self.tray_icon = pystray.Icon("DotaActivity", image, APP_NAME, menu)
+        self.tray_icon = pystray.Icon("DotaActivity", image, APP_NAME, self.build_tray_menu())
         threading.Thread(target=self.tray_icon.run, name="DotaActivityTray", daemon=True).start()
 
     def hide_to_tray(self):
@@ -560,8 +903,7 @@ class DotaActivityApp:
             try:
                 self._create_tray_icon()
             except Exception as exc:
-                from tkinter import messagebox
-                messagebox.showerror("Системный трей", f"Не удалось свернуть приложение в трей.\n\n{exc}")
+                messagebox.showerror(self.tr("tray_error_title"), self.tr("tray_error", error=exc))
                 return
         self.root.withdraw()
 
