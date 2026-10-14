@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import ctypes
 import json
 import os
 import queue
@@ -64,6 +65,8 @@ TEXT = {
         "update_download_title": "Загрузка обновления", "update_download_error": "Не удалось скачать обновление:\n\n{error}",
         "update_downloaded_title": "Обновление скачано",
         "update_downloaded": "Файл сохранён сюда:\n{path}\n\nЗакрой Dota Activity и запусти скачанный файл.",
+        "update_installing": "Обновление готово. Приложение перезапустится и заменит старую версию.",
+        "update_install_error": "Не удалось установить обновление автоматически:\n\n{error}\n\nФайл обновления сохранён здесь:\n{path}",
         "update_invalid": "GitHub вернул некорректные данные о последнем релизе.",
         "activity_default": "В главном меню", "activity_details": "Готовится к игре",
     },
@@ -93,6 +96,8 @@ TEXT = {
         "update_download_title": "Downloading update", "update_download_error": "Could not download the update:\n\n{error}",
         "update_downloaded_title": "Update downloaded",
         "update_downloaded": "The file was saved here:\n{path}\n\nClose Dota Activity and run the downloaded file.",
+        "update_installing": "The update is ready. The app will restart and replace the current version.",
+        "update_install_error": "Could not install the update automatically:\n\n{error}\n\nThe update file is saved here:\n{path}",
         "update_invalid": "GitHub returned invalid information about the latest release.",
         "activity_default": "Main menu", "activity_details": "Getting ready to play",
     },
@@ -134,6 +139,75 @@ def compare_versions(first: str, second: str) -> int:
         return tuple(map(int, match.groups()))
     a, b = parts(first), parts(second)
     return (a > b) - (a < b)
+
+
+def update_download_directory(frozen: bool, home: Path | None = None) -> Path:
+    """Use a private staging folder for packaged installs and Downloads in source mode."""
+    if frozen:
+        return APP_DIR / "updates"
+    return (home or Path.home()) / "Downloads"
+
+
+def update_helper_command(update_path: Path, target_path: Path, process_id: int,
+                          launch_args: list[str] | None = None) -> list[str]:
+    """Build the detached helper command that installs an update after this process exits."""
+    return [str(update_path), "--apply-update", str(process_id), str(target_path), *(launch_args or [])]
+
+
+def _is_windows() -> bool:
+    return os.name == "nt"
+
+
+def _wait_for_process_exit(process_id: int) -> None:
+    """Wait for a Windows process handle, allowing an already-exited process."""
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    synchronize = 0x00100000
+    kernel32.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+    kernel32.WaitForSingleObject.restype = ctypes.c_ulong
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel32.CloseHandle.restype = ctypes.c_int
+    handle = kernel32.OpenProcess(synchronize, False, int(process_id))
+    if not handle:
+        error = ctypes.get_last_error()
+        if error in (0, 87, 1168):  # No such process: it has already exited.
+            return
+        raise OSError(error, "Could not wait for the running Dota Activity process")
+    try:
+        result = kernel32.WaitForSingleObject(handle, 0xFFFFFFFF)
+        if result != 0:
+            raise OSError(ctypes.get_last_error(), "Waiting for Dota Activity to close failed")
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def apply_staged_update(process_id: int, target: Path, launch_args: list[str] | None = None) -> None:
+    """Install this helper executable over the closed app and start the updated app."""
+    if not _is_windows() or not getattr(sys, "frozen", False):
+        raise RuntimeError("Automatic replacement is available only in the packaged Windows app")
+    source = Path(sys.executable).resolve()
+    target = Path(target).resolve()
+    if source == target:
+        raise ValueError("The staged update and installed app paths are the same")
+    _wait_for_process_exit(int(process_id))
+    replacement = target.with_name(f".{target.name}.{os.getpid()}.new")
+    try:
+        import shutil
+        shutil.copy2(source, replacement)
+        os.replace(replacement, target)
+        subprocess.Popen([str(target), *(launch_args or [])], cwd=str(target.parent), close_fds=True)
+    finally:
+        try:
+            replacement.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def show_update_helper_error(error: Exception) -> None:
+    """Display an error from the detached updater without starting the main window."""
+    if _is_windows():
+        ctypes.windll.user32.MessageBoxW(None, str(error), "Dota Activity update", 0x10)
 
 
 def initial_language(settings: dict) -> str:
@@ -735,7 +809,7 @@ class DotaActivityApp:
             error = None
             temporary = None
             try:
-                download_dir = Path.home() / "Downloads"
+                download_dir = update_download_directory(bool(getattr(sys, "frozen", False)))
                 download_dir.mkdir(parents=True, exist_ok=True)
                 path = download_dir / update["name"]
                 temporary = path.with_suffix(path.suffix + ".part")
@@ -769,6 +843,21 @@ class DotaActivityApp:
             self.update_button.configure(state="normal")
         if error or path is None:
             messagebox.showerror(self.tr("update_download_title"), self.tr("update_download_error", error=error))
+            return
+        if getattr(sys, "frozen", False):
+            messagebox.showinfo(self.tr("update_downloaded_title"), self.tr("update_installing"))
+            launch_args = ["--background"] if "--background" in sys.argv[1:] else []
+            command = update_helper_command(path, Path(sys.executable), os.getpid(), launch_args)
+            creationflags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            try:
+                subprocess.Popen(command, cwd=str(path.parent), close_fds=True, creationflags=creationflags)
+            except OSError as exc:
+                messagebox.showerror(
+                    self.tr("update_download_title"),
+                    self.tr("update_install_error", error=exc, path=path),
+                )
+                return
+            self.exit_app()
             return
         messagebox.showinfo(self.tr("update_downloaded_title"), self.tr("update_downloaded", path=path))
 
@@ -968,4 +1057,12 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1 and sys.argv[1] == "--apply-update":
+        try:
+            if len(sys.argv) < 4:
+                raise ValueError("Missing process ID or install path")
+            apply_staged_update(int(sys.argv[2]), Path(sys.argv[3]), sys.argv[4:])
+        except Exception as exc:
+            show_update_helper_error(exc)
+    else:
+        main()
