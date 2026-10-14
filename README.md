@@ -65,7 +65,7 @@ The available details depend on the current game state and the information Dota 
 - **Language:** English is selected by default. Choose Russian in the app window to switch languages; the choice is saved.
 - **Run with Windows:** Turn on the autostart option in the main window. It starts minimized to the system tray when you sign in.
 - **System tray:** Closing the window hides the app in the tray. Use **Exit** in the tray menu to stop it completely.
-- **Updates:** The app checks GitHub Releases for a newer stable version. If you accept an update, the new `.exe` is saved to Downloads. Close the running app and open the downloaded file to use it; the old file is not replaced automatically.
+- **Updates:** The app checks GitHub Releases for a newer stable version. After you accept, it downloads the update, closes, replaces its current `.exe`, and starts again.
 
 ## If Discord activity is missing
 
@@ -76,7 +76,7 @@ The available details depend on the current game state and the information Dota 
 
 ## How it works and privacy
 
-Dota 2 sends game-state updates to a local address on your PC (`127.0.0.1`). Dota Activity reads those updates and publishes the Rich Presence through the Discord desktop app. It does not ask for your Steam password or send game-state data to a Dota Activity server. The app does contact GitHub to check for releases and download an update if you choose to install one.
+The source code is open under the MIT License and available for review. Dota 2 sends game-state updates to a local address on your PC (`127.0.0.1`), and Dota Activity publishes the Rich Presence through the Discord desktop app. The app does not ask for your Steam password or send game-state data to a Dota Activity server. It contacts GitHub to check for releases and download an update only if you choose to install one.
 
 ## Build from source
 
