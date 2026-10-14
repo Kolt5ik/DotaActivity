@@ -56,10 +56,10 @@ class UpdateAndLanguageTests(unittest.TestCase):
             1234,
             ["--background"],
         )
-        self.assertEqual(command, [
-            "C:/Users/example/AppData/updates/new.exe",
-            "--apply-update", "1234", "C:/Users/example/DotaActivity.exe", "--background",
-        ])
+        self.assertEqual(Path(command[0]), Path("C:/Users/example/AppData/updates/new.exe"))
+        self.assertEqual(command[1:3], ["--apply-update", "1234"])
+        self.assertEqual(Path(command[3]), Path("C:/Users/example/DotaActivity.exe"))
+        self.assertEqual(command[4:], ["--background"])
 
     def test_update_helper_waits_then_replaces_and_relaunches(self):
         with TemporaryDirectory() as directory:
