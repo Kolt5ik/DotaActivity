@@ -23,6 +23,12 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-5965f2" alt="Лицензия MIT"></a>
 </p>
 
+<p align="center">
+  <img src="assets/readme-showcase-ru.png" alt="Примеры активности Dota Activity в Discord" width="100%">
+</p>
+
+<p align="center"><sub>Режимы и таймеры в примерах указаны для демонстрации.</sub></p>
+
 ## Что делает приложение
 
 Dota Activity связывает Dota 2 с Discord Rich Presence. Приложение автоматически получает данные об игре и показывает их в статусе Discord, а после выхода из Dota 2 убирает активность.

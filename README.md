@@ -23,6 +23,12 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-5965f2" alt="MIT license"></a>
 </p>
 
+<p align="center">
+  <img src="assets/readme-showcase-en.png" alt="Examples of Dota Activity on Discord" width="100%">
+</p>
+
+<p align="center"><sub>Illustrative match modes and timers.</sub></p>
+
 ## What it does
 
 Dota Activity connects Dota 2 to Discord Rich Presence. It picks up game state automatically and shows useful details while you play, then clears your activity when you close the game.
