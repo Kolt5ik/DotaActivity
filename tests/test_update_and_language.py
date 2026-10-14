@@ -78,9 +78,13 @@ class UpdateAndLanguageTests(unittest.TestCase):
                 app.apply_staged_update(4321, installed, ["--background"])
             wait.assert_called_once_with(4321)
             self.assertEqual(installed.read_bytes(), b"new version")
-            launch.assert_called_once_with(
-                [str(installed), "--background"], cwd=str(root), close_fds=True,
-            )
+            launch.assert_called_once()
+            command = launch.call_args.args[0]
+            options = launch.call_args.kwargs
+            self.assertEqual(Path(command[0]).resolve(), installed.resolve())
+            self.assertEqual(command[1:], ["--background"])
+            self.assertEqual(Path(options["cwd"]).resolve(), root.resolve())
+            self.assertTrue(options["close_fds"])
 
     def test_english_translation_covers_runtime_status(self):
         instance = app.DotaActivityApp.__new__(app.DotaActivityApp)
