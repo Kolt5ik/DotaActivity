@@ -11,11 +11,23 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/Kolt5ik/DotaActivity/releases/latest"><img src="https://img.shields.io/badge/%E2%86%93%20%D0%A1%D0%BA%D0%B0%D1%87%D0%B0%D1%82%D1%8C%20%D0%B4%D0%BB%D1%8F%20Windows-%D0%9F%D0%BE%D1%81%D0%BB%D0%B5%D0%B4%D0%BD%D0%B8%D0%B9%20%D1%80%D0%B5%D0%BB%D0%B8%D0%B7-efbd50?style=for-the-badge&logo=windows&logoColor=161b22&labelColor=efbd50" alt="Скачать последнюю версию для Windows"></a>
+  <br>
+  <sub>Windows 10/11 · 64-разрядная версия</sub>
+</p>
+
+<p align="center">
   <a href="https://github.com/Kolt5ik/DotaActivity/releases/latest"><img src="https://img.shields.io/github/v/release/Kolt5ik/DotaActivity?label=release" alt="Последний релиз"></a>
   <a href="https://github.com/Kolt5ik/DotaActivity/actions/workflows/build-windows.yml"><img src="https://github.com/Kolt5ik/DotaActivity/actions/workflows/build-windows.yml/badge.svg?branch=main" alt="Сборка для Windows"></a>
   <img src="https://img.shields.io/badge/platform-Windows%20x64-5965f2" alt="Windows x64">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-5965f2" alt="Лицензия MIT"></a>
 </p>
+
+<p align="center">
+  <img src="assets/readme-showcase-ru.png" alt="Примеры активности Dota Activity в Discord" width="100%">
+</p>
+
+<p align="center"><sub>Режимы и таймеры в примерах указаны для демонстрации.</sub></p>
 
 ## Что делает приложение
 
