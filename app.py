@@ -19,7 +19,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 APP_NAME = "Dota Activity"
-APP_VERSION = "0.0.6"
+APP_VERSION = "0.0.7"
 DISCORD_GAME_NAME = "Dota"
 GSI_PORT = 38174
 DISCORD_APPLICATION_ID = "1559228191195922513"
