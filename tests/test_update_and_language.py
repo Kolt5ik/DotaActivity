@@ -1,4 +1,7 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 import app
 
@@ -37,11 +40,60 @@ class UpdateAndLanguageTests(unittest.TestCase):
         self.assertEqual(app.compare_versions("0.0.6", "v0.0.6"), 0)
         self.assertEqual(app.compare_versions("0.0.5", "0.0.6"), -1)
 
+    def test_packaged_update_uses_private_staging_directory(self):
+        app_dir = Path("C:/Users/example/AppData/Roaming/DotaActivity")
+        with patch.object(app, "APP_DIR", app_dir):
+            self.assertEqual(app.update_download_directory(True), app_dir / "updates")
+
+    def test_source_update_stays_in_downloads(self):
+        home = Path("C:/Users/example")
+        self.assertEqual(app.update_download_directory(False, home), home / "Downloads")
+
+    def test_update_helper_receives_process_and_target_paths(self):
+        command = app.update_helper_command(
+            Path("C:/Users/example/AppData/updates/new.exe"),
+            Path("C:/Users/example/DotaActivity.exe"),
+            1234,
+            ["--background"],
+        )
+        self.assertEqual(command, [
+            "C:/Users/example/AppData/updates/new.exe",
+            "--apply-update", "1234", "C:/Users/example/DotaActivity.exe", "--background",
+        ])
+
+    def test_update_helper_waits_then_replaces_and_relaunches(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            staged = root / "staged.exe"
+            installed = root / "DotaActivity.exe"
+            staged.write_bytes(b"new version")
+            installed.write_bytes(b"old version")
+            with (
+                patch.object(app, "_is_windows", return_value=True),
+                patch.object(app.sys, "frozen", True, create=True),
+                patch.object(app.sys, "executable", str(staged)),
+                patch.object(app, "_wait_for_process_exit") as wait,
+                patch.object(app.subprocess, "Popen") as launch,
+            ):
+                app.apply_staged_update(4321, installed, ["--background"])
+            wait.assert_called_once_with(4321)
+            self.assertEqual(installed.read_bytes(), b"new version")
+            launch.assert_called_once_with(
+                [str(installed), "--background"], cwd=str(root), close_fds=True,
+            )
+
     def test_english_translation_covers_runtime_status(self):
         instance = app.DotaActivityApp.__new__(app.DotaActivityApp)
         instance.language = "en"
         self.assertEqual(instance.tr("game_closed"), "Dota is not running")
         self.assertEqual(instance.ui_text("Выбирает героя"), "Picking a hero")
+
+    def test_update_install_status_is_localized(self):
+        instance = app.DotaActivityApp.__new__(app.DotaActivityApp)
+        instance.language = "en"
+        self.assertIn("restart", instance.tr("update_installing"))
+        instance.language = "ru"
+        self.assertIn("перезапустится", instance.tr("update_installing"))
 
     def test_tray_menu_labels_follow_selected_language(self):
         self.assertEqual(app.tray_menu_labels("en"), ("Open Dota Activity", "Exit"))
