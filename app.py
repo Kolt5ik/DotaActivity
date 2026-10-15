@@ -322,6 +322,30 @@ def windows_autostart_enabled() -> bool:
         return False
 
 
+def migrate_windows_autostart() -> bool:
+    """Point an existing startup entry at this executable after a manual upgrade."""
+    import winreg
+
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            WINDOWS_RUN_KEY,
+            0,
+            winreg.KEY_QUERY_VALUE | winreg.KEY_SET_VALUE,
+        ) as key:
+            try:
+                current, _kind = winreg.QueryValueEx(key, AUTOSTART_NAME)
+            except FileNotFoundError:
+                return False
+            expected = windows_autostart_command()
+            if current == expected:
+                return False
+            winreg.SetValueEx(key, AUTOSTART_NAME, 0, winreg.REG_SZ, expected)
+            return True
+    except FileNotFoundError:
+        return False
+
+
 def set_windows_autostart(enabled: bool) -> None:
     import winreg
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, WINDOWS_RUN_KEY) as key:
@@ -601,6 +625,13 @@ class DotaActivityApp:
         self.last_presence: dict | None = None
         self.dota_running = False
         self.autostart_var = tk.BooleanVar(value=windows_autostart_enabled())
+        if getattr(sys, "frozen", False) and self.autostart_var.get():
+            try:
+                migrate_windows_autostart()
+            except (ImportError, OSError):
+                # Keep startup non-blocking; the user can still repair the entry
+                # through the checkbox if the registry is temporarily unavailable.
+                pass
         self.update_check_running = False
         self.latest_available_version: str | None = None
         self.dota_cfg_dir: Path | None = None
