@@ -19,7 +19,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 APP_NAME = "Dota Activity"
-APP_VERSION = "0.0.7"
+APP_VERSION = "0.0.8"
 DISCORD_GAME_NAME = "Dota"
 GSI_PORT = 38174
 DISCORD_APPLICATION_ID = "1559228191195922513"
@@ -243,7 +243,36 @@ UI_STATUS_EN = {
     "Статус Dota 2 опубликован в Discord": "Dota 2 status posted to Discord",
     "Потеряна связь с Discord · переподключаюсь…": "Discord connection lost · reconnecting…",
     "Ищу Dota 2 в библиотеках Steam…": "Looking for Dota 2 in Steam libraries…",
+    "Тренировка": "Practice", "Турнир": "Tournament", "Обучение": "Tutorial",
+    "Против ботов": "Vs. bots", "Обычная игра · All Pick": "Normal game · All Pick",
+    "Single Draft": "Single Draft", "Random Draft": "Random Draft",
+    "Captains Mode": "Captains Mode", "All Random": "All Random",
+    "Ability Draft": "Ability Draft", "Turbo": "Turbo",
 }
+
+
+def localized_presence_text(value: str, language: str) -> str:
+    """Translate a Discord presence field using the app's selected language."""
+    if language != "en":
+        return value
+    translated = UI_STATUS_EN.get(value)
+    if translated is not None:
+        return translated
+    for russian, english in (("Победа", "Victory"), ("Матч завершён", "Match complete")):
+        prefix = russian + " · "
+        if value.startswith(prefix):
+            return english + value[len(russian):]
+    return value
+
+
+def localized_presence(data: dict, language: str) -> dict:
+    """Return the presence payload with visible text translated for Discord."""
+    result = dict(data)
+    for key in ("status", "details", "state", "large_text"):
+        value = result.get(key)
+        if isinstance(value, str):
+            result[key] = localized_presence_text(value, language)
+    return result
 
 
 def dota_is_listed(tasklist_output: str) -> bool:
@@ -642,6 +671,8 @@ class DotaActivityApp:
         self.gsi_var.set(self.ui_text(self.gsi_var.get()))
         self.refresh_tray_menu()
         self.save_settings()
+        if self.dota_running and self.last_presence:
+            self.send_presence(self.last_presence)
 
     def refresh_tray_menu(self):
         if self.tray_icon is None:
@@ -785,7 +816,8 @@ class DotaActivityApp:
             return
 
         self.latest_available_version = update["version"]
-        if not manual and self.settings.get("dismissed_update_version") == update["version"]:
+        if not manual:
+            self.status_var.set(self.tr("update_available", version=update["version"]))
             return
         notes = update.get("notes", "")[:800] or ("Нет описания релиза." if self.language == "ru" else "No release notes.")
         accepted = messagebox.askyesno(
@@ -926,15 +958,16 @@ class DotaActivityApp:
             return
         try:
             # Use public Dota image URLs; no custom Discord asset upload is needed.
+            discord_data = localized_presence(data, self.language)
             kwargs = {
                 "name": DISCORD_GAME_NAME,
-                "details": data.get("details", "Playing Dota 2"),
-                "state": data.get("state", "Dota 2"),
-                "large_image": data.get("large_image", DOTA_LOGO_URL),
-                "large_text": data.get("large_text", "Dota 2"),
+                "details": discord_data.get("details", "Playing Dota 2"),
+                "state": discord_data.get("state", "Dota 2"),
+                "large_image": discord_data.get("large_image", DOTA_LOGO_URL),
+                "large_text": discord_data.get("large_text", "Dota 2"),
             }
-            if data.get("start"):
-                kwargs["start"] = data["start"]
+            if discord_data.get("start"):
+                kwargs["start"] = discord_data["start"]
             self.rpc.update(**kwargs)
             self.status_var.set(self.tr("rpc_published"))
         except Exception:
