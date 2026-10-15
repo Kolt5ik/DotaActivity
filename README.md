@@ -67,6 +67,18 @@ The available details depend on the current game state and the information Dota 
 - **System tray:** Closing the window hides the app in the tray. Use **Exit** in the tray menu to stop it completely.
 - **Updates:** The app checks GitHub Releases for a newer stable version. After you accept, it downloads the update, closes, replaces its current `.exe`, and starts again.
 
+## Performance and memory use
+
+We measured Dota Activity on Windows in three scenarios: idle, the Dota menu, and a match. Each scenario was sampled 60 times over two minutes. In these runs, average private bytes stayed around 70–71 MiB. Average working set was about 102 MiB at idle and in the menu, and about 90 MiB in a match.
+
+Working set is the app memory currently resident in physical RAM. Private bytes is memory committed exclusively to Dota Activity. The measurements cover the DotaActivity process only; they do not include Dota 2 or Discord. Results are from one PC and can vary between systems and runs. The chart includes the observed min–max range and p95.
+
+![Dota Activity memory measurements](assets/DotaActivity-memory-en.png)
+
+## Medal Rich Presence
+
+Medal can publish its own Rich Presence to Discord. DotaActivity cannot assign its activity a higher priority than another app's presence, so Medal's status may appear instead. To let DotaActivity show in Discord, turn off **Promote my Medal profile using Rich Presence** in Medal under **Settings → Privacy & Security → Privacy & Visibility**. See [Medal's support guide](https://support.medal.tv/support/solutions/articles/48001159956) for details. Medal itself can stay open; this disables its Rich Presence promotion.
+
 ## If Discord activity is missing
 
 1. Make sure the Discord **desktop app** is open.
