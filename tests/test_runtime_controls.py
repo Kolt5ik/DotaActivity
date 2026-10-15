@@ -1,4 +1,6 @@
 import unittest
+import sys
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -60,6 +62,42 @@ class RuntimeControlTests(unittest.TestCase):
             command = app.windows_autostart_command()
         self.assertIn("--background", command)
         self.assertIn("Dota Activity.exe", command)
+
+    def test_existing_autostart_entry_is_migrated_to_current_executable(self):
+        class FakeKey:
+            def __enter__(self): return self
+            def __exit__(self, *_args): pass
+
+        key = FakeKey()
+        existing = r'"C:\Old\DotaActivity.exe" --background'
+        updated = []
+        winreg = SimpleNamespace(
+            HKEY_CURRENT_USER=1, KEY_QUERY_VALUE=2, KEY_SET_VALUE=4, REG_SZ=1,
+            OpenKey=lambda *_args: key,
+            QueryValueEx=lambda *_args: (existing, 1),
+            SetValueEx=lambda _key, name, _reserved, kind, value: updated.append((name, kind, value)),
+        )
+        with patch.dict(sys.modules, {"winreg": winreg}), patch.object(
+            app, "windows_autostart_command", return_value=r'"C:\New\DotaActivity.exe" --background'
+        ):
+            migrated = app.migrate_windows_autostart()
+
+        self.assertTrue(migrated)
+        self.assertEqual(updated, [(app.AUTOSTART_NAME, winreg.REG_SZ, r'"C:\New\DotaActivity.exe" --background')])
+
+    def test_autostart_migration_leaves_disabled_startup_disabled(self):
+        class FakeKey:
+            def __enter__(self): return self
+            def __exit__(self, *_args): pass
+
+        winreg = SimpleNamespace(
+            HKEY_CURRENT_USER=1, KEY_QUERY_VALUE=2, KEY_SET_VALUE=4, REG_SZ=1,
+            OpenKey=lambda *_args: FakeKey(),
+            QueryValueEx=lambda *_args: (_ for _ in ()).throw(FileNotFoundError()),
+            SetValueEx=lambda *_args: self.fail("Must not enable startup during migration"),
+        )
+        with patch.dict(sys.modules, {"winreg": winreg}):
+            self.assertFalse(app.migrate_windows_autostart())
 
 
 if __name__ == "__main__":
