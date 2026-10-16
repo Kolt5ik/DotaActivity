@@ -7,7 +7,7 @@ import app
 
 
 class UpdateAndLanguageTests(unittest.TestCase):
-    def release(self, tag="v0.0.10", *, prerelease=False, asset=True):
+    def release(self, tag="v0.0.11", *, prerelease=False, asset=True):
         assets = []
         if asset:
             assets.append({
@@ -19,8 +19,8 @@ class UpdateAndLanguageTests(unittest.TestCase):
     def test_finds_new_windows_release_asset(self):
         update = app.parse_release_update(self.release())
         self.assertIsNotNone(update)
-        self.assertEqual(update["version"], "0.0.10")
-        self.assertTrue(update["url"].endswith("DotaActivity-v0.0.10-Windows-x64.exe"))
+        self.assertEqual(update["version"], "0.0.11")
+        self.assertTrue(update["url"].endswith("DotaActivity-v0.0.11-Windows-x64.exe"))
 
     def test_ignores_current_or_older_versions(self):
         self.assertIsNone(app.parse_release_update(self.release("v0.0.6")))
