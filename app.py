@@ -37,6 +37,8 @@ LANGUAGE_SETTINGS_VERSION = 1
 GITHUB_RELEASE_API = "https://api.github.com/repos/Kolt5ik/DotaActivity/releases/latest"
 GITHUB_RELEASE_PREFIX = "https://github.com/Kolt5ik/DotaActivity/releases/download/"
 MAX_UPDATE_BYTES = 250 * 1024 * 1024
+_INSTANCE_MUTEX_HANDLE = None
+INSTANCE_MUTEX_NAME = r"Local\DotaActivity.Singleton"
 
 TEXT = {
     "ru": {
@@ -69,6 +71,8 @@ TEXT = {
         "update_install_error": "Не удалось установить обновление автоматически:\n\n{error}\n\nФайл обновления сохранён здесь:\n{path}",
         "update_invalid": "GitHub вернул некорректные данные о последнем релизе.",
         "activity_default": "В главном меню", "activity_details": "Готовится к игре",
+        "already_running_title": "Dota Activity уже запущена",
+        "already_running": "Уже работает другая копия Dota Activity.",
     },
     "en": {
         "window_title": "Dota Activity", "brand_subtitle": "Kolt5ik project · Dota status for Discord",
@@ -100,6 +104,8 @@ TEXT = {
         "update_install_error": "Could not install the update automatically:\n\n{error}\n\nThe update file is saved here:\n{path}",
         "update_invalid": "GitHub returned invalid information about the latest release.",
         "activity_default": "Main menu", "activity_details": "Getting ready to play",
+        "already_running_title": "Dota Activity is already running",
+        "already_running": "Another copy of Dota Activity is already running.",
     },
 }
 
@@ -183,7 +189,7 @@ def _wait_for_process_exit(process_id: int) -> None:
 
 
 def apply_staged_update(process_id: int, target: Path, launch_args: list[str] | None = None) -> None:
-    """Install this helper executable over the closed app and start the updated app."""
+    """Install the staged executable and restore the previous app if launch fails."""
     if not _is_windows() or not getattr(sys, "frozen", False):
         raise RuntimeError("Automatic replacement is available only in the packaged Windows app")
     source = Path(sys.executable).resolve()
@@ -192,16 +198,55 @@ def apply_staged_update(process_id: int, target: Path, launch_args: list[str] | 
         raise ValueError("The staged update and installed app paths are the same")
     _wait_for_process_exit(int(process_id))
     replacement = target.with_name(f".{target.name}.{os.getpid()}.new")
+    backup = target.with_name(f".{target.name}.{os.getpid()}.bak")
     try:
         import shutil
         shutil.copy2(source, replacement)
-        os.replace(replacement, target)
-        subprocess.Popen([str(target), *(launch_args or [])], cwd=str(target.parent), close_fds=True)
+        os.replace(target, backup)
+        try:
+            os.replace(replacement, target)
+            process = subprocess.Popen(
+                [str(target), *(launch_args or [])], cwd=str(target.parent), close_fds=True,
+            )
+            time.sleep(2)
+            if process.poll() is not None:
+                raise RuntimeError("The updated app exited during startup")
+        except Exception:
+            try:
+                target.unlink(missing_ok=True)
+                os.replace(backup, target)
+            except OSError as rollback_error:
+                raise RuntimeError(
+                    f"Update failed and automatic rollback failed. The previous executable is at: {backup}"
+                ) from rollback_error
+            raise
+        backup.unlink(missing_ok=True)
     finally:
         try:
             replacement.unlink(missing_ok=True)
         except OSError:
             pass
+
+
+def acquire_single_instance() -> bool:
+    """Hold a Windows mutex for this process; return False when another copy owns it."""
+    global _INSTANCE_MUTEX_HANDLE
+    if not _is_windows() or _INSTANCE_MUTEX_HANDLE is not None:
+        return True
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
+    kernel32.CreateMutexW.restype = ctypes.c_void_p
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel32.CloseHandle.restype = ctypes.c_int
+    handle = kernel32.CreateMutexW(None, True, INSTANCE_MUTEX_NAME)
+    if not handle:
+        error = ctypes.get_last_error()
+        raise OSError(error, "Could not create the Dota Activity single-instance mutex")
+    if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
+        kernel32.CloseHandle(handle)
+        return False
+    _INSTANCE_MUTEX_HANDLE = handle
+    return True
 
 
 def show_update_helper_error(error: Exception) -> None:
@@ -582,7 +627,20 @@ class GSIHandler(BaseHTTPRequestHandler):
                 self.send_error(400)
                 return
             payload = json.loads(self.rfile.read(length))
-            if payload.get("auth", {}).get("token") != self.token:
+            if not isinstance(payload, dict):
+                self.send_error(400)
+                return
+            auth = payload.get("auth")
+            if not isinstance(auth, dict):
+                self.send_error(400)
+                return
+            if any(
+                key in payload and payload[key] is not None and not isinstance(payload[key], dict)
+                for key in ("map", "player", "hero")
+            ):
+                self.send_error(400)
+                return
+            if auth.get("token") != self.token:
                 self.send_error(403)
                 return
             presence = presence_from_gsi(payload)
@@ -1115,8 +1173,20 @@ class DotaActivityApp:
 
 
 def main():
+    start_hidden = "--background" in sys.argv[1:]
+    if not acquire_single_instance():
+        if not start_hidden:
+            language = initial_language(DotaActivityApp.load_settings())
+            root = tk.Tk()
+            root.withdraw()
+            messagebox.showinfo(
+                TEXT[language]["already_running_title"],
+                TEXT[language]["already_running"],
+            )
+            root.destroy()
+        return
     root = tk.Tk()
-    DotaActivityApp(root, start_hidden="--background" in sys.argv[1:])
+    DotaActivityApp(root, start_hidden=start_hidden)
     root.mainloop()
 
 

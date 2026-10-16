@@ -1,11 +1,36 @@
 import unittest
 import tempfile
+import io
+import json
+import queue
 from pathlib import Path
 
-from app import DOTA_LOGO_URL, DISCORD_APPLICATION_ID, find_dota_cfg_dir, gsi_config_text, install_gsi_config, presence_from_gsi, prettify_hero, steam_roots_from_vdf
+from app import DOTA_LOGO_URL, DISCORD_APPLICATION_ID, GSIHandler, find_dota_cfg_dir, gsi_config_text, install_gsi_config, presence_from_gsi, prettify_hero, steam_roots_from_vdf
+
+
+class GSIHandlerTestDouble:
+    def __init__(self, body):
+        self.headers = {"Content-Length": str(len(body))}
+        self.rfile = io.BytesIO(body)
+        self.token = "test"
+        self.events = queue.Queue()
+        self.errors = []
+
+    def send_error(self, code):
+        self.errors.append(code)
 
 
 class GsiParsingTests(unittest.TestCase):
+    def test_gsi_handler_rejects_non_object_json(self):
+        handler = GSIHandlerTestDouble(b"[]")
+        GSIHandler.do_POST(handler)
+        self.assertEqual(handler.errors, [400])
+
+    def test_gsi_handler_rejects_malformed_nested_fields(self):
+        handler = GSIHandlerTestDouble(json.dumps({"auth": {"token": "test"}, "map": []}).encode())
+        GSIHandler.do_POST(handler)
+        self.assertEqual(handler.errors, [400])
+
     def test_discord_application_id_is_embedded(self):
         self.assertTrue(DISCORD_APPLICATION_ID.isdigit())
 

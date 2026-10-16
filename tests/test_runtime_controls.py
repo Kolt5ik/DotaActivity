@@ -2,12 +2,35 @@ import unittest
 import sys
 from types import SimpleNamespace
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import app
 
 
 class RuntimeControlTests(unittest.TestCase):
+    def test_single_instance_mutex_rejects_an_existing_copy(self):
+        kernel32 = SimpleNamespace(
+            CreateMutexW=Mock(return_value=123),
+            CloseHandle=Mock(),
+        )
+        with (
+            patch.object(app, "_is_windows", return_value=True),
+            patch.object(app, "_INSTANCE_MUTEX_HANDLE", None),
+            patch.object(app.ctypes, "WinDLL", return_value=kernel32, create=True),
+            patch.object(app.ctypes, "get_last_error", return_value=183, create=True),
+        ):
+            self.assertFalse(app.acquire_single_instance())
+        kernel32.CloseHandle.assert_called_once_with(123)
+
+    def test_background_duplicate_exits_without_opening_a_window(self):
+        with (
+            patch.object(app, "acquire_single_instance", return_value=False),
+            patch.object(app.sys, "argv", ["DotaActivity.exe", "--background"]),
+            patch.object(app.tk, "Tk") as create_window,
+        ):
+            app.main()
+        create_window.assert_not_called()
+
     def test_dota_process_is_detected_from_tasklist_csv(self):
         self.assertTrue(app.dota_is_listed('"dota2.exe","4120","Console","1","123,456 K"'))
 
