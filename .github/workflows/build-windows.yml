@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -45,8 +45,7 @@ jobs:
       - name: Build standalone executable
         run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name DotaActivity --version-file version_info.txt --icon assets/logo_dota.ico --add-data "assets/logo_dota.png;assets" --collect-all pypresence app.py
 
-      - name: Upload test artifact
-        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+      - name: Upload Windows executable
         uses: actions/upload-artifact@v4
         with:
           name: DotaActivity-Windows-x64
@@ -54,13 +53,23 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Windows executable
+        uses: actions/download-artifact@v4
+        with:
+          name: DotaActivity-Windows-x64
+          path: dist
+
       - name: Prepare versioned release file
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-        shell: pwsh
-        run: Copy-Item dist/DotaActivity.exe "dist/DotaActivity-$env:GITHUB_REF_NAME-Windows-x64.exe"
+        run: cp dist/DotaActivity.exe "dist/DotaActivity-${GITHUB_REF_NAME}-Windows-x64.exe"
 
       - name: Publish versioned release
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           name: Dota Activity ${{ github.ref_name }}

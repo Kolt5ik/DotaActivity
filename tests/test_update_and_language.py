@@ -74,7 +74,9 @@ class UpdateAndLanguageTests(unittest.TestCase):
                 patch.object(app.sys, "executable", str(staged)),
                 patch.object(app, "_wait_for_process_exit") as wait,
                 patch.object(app.subprocess, "Popen") as launch,
+                patch.object(app.time, "sleep"),
             ):
+                launch.return_value.poll.return_value = None
                 app.apply_staged_update(4321, installed, ["--background"])
             wait.assert_called_once_with(4321)
             self.assertEqual(installed.read_bytes(), b"new version")
@@ -85,6 +87,49 @@ class UpdateAndLanguageTests(unittest.TestCase):
             self.assertEqual(command[1:], ["--background"])
             self.assertEqual(Path(options["cwd"]).resolve(), root.resolve())
             self.assertTrue(options["close_fds"])
+            self.assertFalse(list(root.glob("*.bak")))
+
+    def test_update_helper_restores_previous_executable_when_relaunch_fails(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            staged = root / "staged.exe"
+            installed = root / "DotaActivity.exe"
+            staged.write_bytes(b"new version")
+            installed.write_bytes(b"old version")
+            with (
+                patch.object(app, "_is_windows", return_value=True),
+                patch.object(app.sys, "frozen", True, create=True),
+                patch.object(app.sys, "executable", str(staged)),
+                patch.object(app, "_wait_for_process_exit"),
+                patch.object(app.subprocess, "Popen", side_effect=OSError("launch failed")),
+                patch.object(app.time, "sleep"),
+            ):
+                with self.assertRaisesRegex(OSError, "launch failed"):
+                    app.apply_staged_update(4321, installed)
+            self.assertEqual(installed.read_bytes(), b"old version")
+            self.assertEqual(staged.read_bytes(), b"new version")
+            self.assertFalse(list(root.glob("*.bak")))
+
+    def test_update_helper_restores_previous_executable_if_new_app_exits(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            staged = root / "staged.exe"
+            installed = root / "DotaActivity.exe"
+            staged.write_bytes(b"new version")
+            installed.write_bytes(b"old version")
+            exited_process = type("ExitedProcess", (), {"poll": lambda _self: 1})()
+            with (
+                patch.object(app, "_is_windows", return_value=True),
+                patch.object(app.sys, "frozen", True, create=True),
+                patch.object(app.sys, "executable", str(staged)),
+                patch.object(app, "_wait_for_process_exit"),
+                patch.object(app.subprocess, "Popen", return_value=exited_process),
+                patch.object(app.time, "sleep"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "exited during startup"):
+                    app.apply_staged_update(4321, installed)
+            self.assertEqual(installed.read_bytes(), b"old version")
+            self.assertFalse(list(root.glob("*.bak")))
 
     def test_english_translation_covers_runtime_status(self):
         instance = app.DotaActivityApp.__new__(app.DotaActivityApp)
