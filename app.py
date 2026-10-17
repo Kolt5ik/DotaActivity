@@ -274,6 +274,8 @@ def tray_menu_labels(language: str) -> tuple[str, str]:
 UI_STATUS_EN = {
     "Dota не запущена": "Dota is not running", "Выбирает героя": "Picking a hero",
     "Подготовка к матчу": "Preparing for a match", "В игре": "In game",
+    "Смотрит матч": "Spectating", "Наблюдает за матчем": "Watching a match",
+    "Наблюдает за матчем · матч завершён": "Watching a match · match complete",
     "После матча": "Post-game", "Рейтинг · All Pick": "Ranked · All Pick",
     "Рейтинг": "Ranked", "Против ботов": "Vs. bots", "Тренировка": "Practice",
     "Обычная игра · All Pick": "Normal game · All Pick", "Обычная игра": "Normal game",
@@ -497,6 +499,16 @@ def hero_image_url(raw: str) -> str:
     return f"{STEAM_ASSET_ROOT}/heroes/{hero}.png" if hero else DOTA_LOGO_URL
 
 
+def is_spectating(payload: dict) -> bool:
+    """Detect Dota's spectator payload, where player data contains both teams."""
+    player = payload.get("player")
+    if not isinstance(player, dict):
+        return False
+    if str(player.get("activity", "")).lower() in {"spectating", "watching"}:
+        return True
+    return any(isinstance(player.get(team), dict) for team in ("team2", "team3"))
+
+
 def presence_from_gsi(payload: dict) -> dict | None:
     """Convert a Dota GSI payload to a Discord presence description."""
     map_data = payload.get("map") or {}
@@ -515,6 +527,12 @@ def presence_from_gsi(payload: dict) -> dict | None:
         return {"status": "Подготовка к матчу", "details": "Матч скоро начнётся", "state": mode, "large_image": DOTA_LOGO_URL, "large_text": "Dota 2"}
 
     if state == "DOTA_GAMERULES_STATE_GAME_IN_PROGRESS":
+        if is_spectating(payload):
+            start = int(time.time() - game_time) if isinstance(game_time, (int, float)) and game_time > 0 else None
+            return {
+                "status": "Смотрит матч", "details": "Наблюдает за матчем", "state": mode,
+                "large_image": DOTA_LOGO_URL, "large_text": "Dota 2", "start": start,
+            }
         kills, deaths, assists = (player.get(k, 0) for k in ("kills", "deaths", "assists"))
         details = f"{hero_name} · {kills}/{deaths}/{assists}"
         net_worth = player.get("net_worth")
@@ -527,6 +545,11 @@ def presence_from_gsi(payload: dict) -> dict | None:
         }
 
     if state == "DOTA_GAMERULES_STATE_POST_GAME":
+        if is_spectating(payload):
+            return {
+                "status": "Смотрит матч", "details": "Наблюдает за матчем · матч завершён",
+                "state": mode, "large_image": DOTA_LOGO_URL, "large_text": "Dota 2",
+            }
         win_team = map_data.get("win_team")
         team = player.get("team_name")
         outcome = "Победа" if win_team and team and win_team == team else "Матч завершён"

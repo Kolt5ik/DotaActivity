@@ -5,7 +5,7 @@ import json
 import queue
 from pathlib import Path
 
-from app import DOTA_LOGO_URL, DISCORD_APPLICATION_ID, GSIHandler, find_dota_cfg_dir, gsi_config_text, install_gsi_config, presence_from_gsi, prettify_hero, steam_roots_from_vdf
+from app import DOTA_LOGO_URL, DISCORD_APPLICATION_ID, GSIHandler, find_dota_cfg_dir, gsi_config_text, install_gsi_config, localized_presence, presence_from_gsi, prettify_hero, steam_roots_from_vdf
 
 
 class GSIHandlerTestDouble:
@@ -48,6 +48,35 @@ class GsiParsingTests(unittest.TestCase):
         self.assertEqual(result["details"], "Axe · 4/2/7 · 8 400 NW")
         self.assertEqual(result["state"], "Рейтинг · All Pick")
         self.assertEqual(result["large_image"], "https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/heroes/axe.png")
+
+    def test_spectator_presence_does_not_show_watched_players_stats(self):
+        result = presence_from_gsi({
+            "map": {"game_state": "DOTA_GAMERULES_STATE_GAME_IN_PROGRESS", "game_time": 90, "game_mode": 22},
+            "player": {
+                "team2": {"player0": {"kills": 12, "deaths": 3, "assists": 8, "net_worth": 18000}},
+                "team3": {"player5": {"kills": 4, "deaths": 9, "assists": 2}},
+            },
+            "hero": {"team2": {"player0": {"name": "npc_dota_hero_axe"}}},
+        })
+        self.assertEqual(result["status"], "Смотрит матч")
+        self.assertEqual(result["details"], "Наблюдает за матчем")
+        self.assertEqual(result["state"], "Рейтинг · All Pick")
+        self.assertEqual(result["large_image"], DOTA_LOGO_URL)
+        self.assertNotIn("12/3/8", result["details"])
+        self.assertNotIn("18 000", result["details"])
+        english = localized_presence(result, "en")
+        self.assertEqual(english["status"], "Spectating")
+        self.assertEqual(english["details"], "Watching a match")
+
+    def test_post_game_spectator_does_not_show_watched_players_result(self):
+        result = presence_from_gsi({
+            "map": {"game_state": "DOTA_GAMERULES_STATE_POST_GAME", "win_team": "team2"},
+            "player": {"team2": {"player0": {"kills": 12, "deaths": 3, "assists": 8, "team_name": "team2"}}},
+            "hero": {"team2": {"player0": {"name": "npc_dota_hero_axe"}}},
+        })
+        self.assertEqual(result["status"], "Смотрит матч")
+        self.assertNotIn("Победа", result["details"])
+        self.assertNotIn("12/3/8", result["details"])
 
     def test_hero_selection_uses_dota_logo_until_match_starts(self):
         result = presence_from_gsi({
