@@ -19,7 +19,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 APP_NAME = "Dota Activity"
-APP_VERSION = "0.0.11"
+APP_VERSION = "0.0.12"
 DISCORD_GAME_NAME = "Dota"
 GSI_PORT = 38174
 DISCORD_APPLICATION_ID = "1559228191195922513"
@@ -282,7 +282,7 @@ UI_STATUS_EN = {
     "Турнир": "Tournament", "Обучение": "Tutorial", "Главное меню": "Main menu",
     "Активность появится при запуске игры": "Activity will appear when the game starts",
     "Готовится к игре": "Getting ready to play", "Матч скоро начнётся": "Match starting soon",
-    "Победа": "Victory", "Матч завершён": "Match complete",
+    "Победа": "Victory", "Поражение": "Defeat", "Матч завершён": "Match complete",
     "Ожидаю запуска Dota 2": "Waiting for Dota 2", "Локальное подключение готово · ожидаю Discord": "Local connection ready · waiting for Discord",
     "Не удалось открыть локальный порт для Dota 2": "Could not open the local Dota 2 port",
     "Dota 2 запущена · подключаюсь к Discord": "Dota 2 is running · connecting to Discord",
@@ -305,7 +305,7 @@ def localized_presence_text(value: str, language: str) -> str:
     translated = UI_STATUS_EN.get(value)
     if translated is not None:
         return translated
-    for russian, english in (("Победа", "Victory"), ("Матч завершён", "Match complete")):
+    for russian, english in (("Победа", "Victory"), ("Поражение", "Defeat"), ("Матч завершён", "Match complete")):
         prefix = russian + " · "
         if value.startswith(prefix):
             return english + value[len(russian):]
@@ -552,10 +552,12 @@ def presence_from_gsi(payload: dict) -> dict | None:
             }
         win_team = map_data.get("win_team")
         team = player.get("team_name")
-        outcome = "Победа" if win_team and team and win_team == team else "Матч завершён"
-        kda = f"{player.get('kills', 0)}/{player.get('deaths', 0)}/{player.get('assists', 0)}"
+        if win_team and team:
+            outcome = "Победа" if win_team == team else "Поражение"
+        else:
+            outcome = "Матч завершён"
         return {
-            "status": "После матча", "details": f"{outcome} · {hero_name} · {kda}",
+            "status": "После матча", "details": outcome,
             "state": mode, "large_image": hero_image_url(hero_raw_name), "large_text": hero_name,
         }
     return None

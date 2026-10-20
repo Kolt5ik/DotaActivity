@@ -120,7 +120,15 @@ class GsiParsingTests(unittest.TestCase):
             "player": {"team_name": "team2", "kills": 2, "deaths": 3, "assists": 8},
             "hero": {"name": "npc_dota_hero_juggernaut"},
         })
-        self.assertIn("Победа", result["details"])
+        self.assertEqual(result["details"], "Победа")
+
+    def test_post_game_loss_has_short_result(self):
+        result = presence_from_gsi({
+            "map": {"game_state": "DOTA_GAMERULES_STATE_POST_GAME", "win_team": "team3"},
+            "player": {"team_name": "team2", "kills": 12, "deaths": 1, "assists": 4},
+            "hero": {"name": "npc_dota_hero_axe"},
+        })
+        self.assertEqual(result["details"], "Поражение")
 
     def test_discovers_dota_in_a_secondary_steam_library(self):
         with tempfile.TemporaryDirectory() as temporary:

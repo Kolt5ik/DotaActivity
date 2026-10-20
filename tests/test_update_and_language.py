@@ -7,7 +7,7 @@ import app
 
 
 class UpdateAndLanguageTests(unittest.TestCase):
-    def release(self, tag="v0.0.12", *, prerelease=False, asset=True):
+    def release(self, tag="v0.0.13", *, prerelease=False, asset=True):
         assets = []
         if asset:
             assets.append({
@@ -19,8 +19,8 @@ class UpdateAndLanguageTests(unittest.TestCase):
     def test_finds_new_windows_release_asset(self):
         update = app.parse_release_update(self.release())
         self.assertIsNotNone(update)
-        self.assertEqual(update["version"], "0.0.12")
-        self.assertTrue(update["url"].endswith("DotaActivity-v0.0.12-Windows-x64.exe"))
+        self.assertEqual(update["version"], "0.0.13")
+        self.assertTrue(update["url"].endswith("DotaActivity-v0.0.13-Windows-x64.exe"))
 
     def test_ignores_current_or_older_versions(self):
         self.assertIsNone(app.parse_release_update(self.release("v0.0.11")))
@@ -154,9 +154,9 @@ class UpdateAndLanguageTests(unittest.TestCase):
         instance.status_var = type("Status", (), {"set": lambda self, value: setattr(self, "value", value)})()
         instance.latest_available_version = None
         with patch.object(app.messagebox, "askyesno") as prompt:
-            instance.finish_update_check({"version": "0.0.12", "notes": "Fixes"}, None, False, False)
+            instance.finish_update_check({"version": "0.0.13", "notes": "Fixes"}, None, False, False)
         prompt.assert_not_called()
-        self.assertEqual(instance.status_var.value, "Version 0.0.12 is available")
+        self.assertEqual(instance.status_var.value, "Version 0.0.13 is available")
 
     def test_manual_update_check_still_offers_the_update(self):
         instance = app.DotaActivityApp.__new__(app.DotaActivityApp)
@@ -166,7 +166,7 @@ class UpdateAndLanguageTests(unittest.TestCase):
         instance.latest_available_version = None
         with (patch.object(app.messagebox, "askyesno", return_value=False) as prompt,
               patch.object(instance, "save_settings")):
-            instance.finish_update_check({"version": "0.0.12", "notes": "Fixes"}, None, False, True)
+            instance.finish_update_check({"version": "0.0.13", "notes": "Fixes"}, None, False, True)
         prompt.assert_called_once()
 
     def test_update_install_status_is_localized(self):
