@@ -282,7 +282,7 @@ UI_STATUS_EN = {
     "Турнир": "Tournament", "Обучение": "Tutorial", "Главное меню": "Main menu",
     "Активность появится при запуске игры": "Activity will appear when the game starts",
     "Готовится к игре": "Getting ready to play", "Матч скоро начнётся": "Match starting soon",
-    "Победа": "Victory", "Матч завершён": "Match complete",
+    "Победа": "Victory", "Поражение": "Defeat", "Матч завершён": "Match complete",
     "Ожидаю запуска Dota 2": "Waiting for Dota 2", "Локальное подключение готово · ожидаю Discord": "Local connection ready · waiting for Discord",
     "Не удалось открыть локальный порт для Dota 2": "Could not open the local Dota 2 port",
     "Dota 2 запущена · подключаюсь к Discord": "Dota 2 is running · connecting to Discord",
@@ -305,7 +305,7 @@ def localized_presence_text(value: str, language: str) -> str:
     translated = UI_STATUS_EN.get(value)
     if translated is not None:
         return translated
-    for russian, english in (("Победа", "Victory"), ("Матч завершён", "Match complete")):
+    for russian, english in (("Победа", "Victory"), ("Поражение", "Defeat"), ("Матч завершён", "Match complete")):
         prefix = russian + " · "
         if value.startswith(prefix):
             return english + value[len(russian):]
@@ -552,10 +552,11 @@ def presence_from_gsi(payload: dict) -> dict | None:
             }
         win_team = map_data.get("win_team")
         team = player.get("team_name")
-        outcome = "Победа" if win_team and team and win_team == team else "Матч завершён"
-        kda = f"{player.get('kills', 0)}/{player.get('deaths', 0)}/{player.get('assists', 0)}"
+        outcome = "Победа" if win_team and team and win_team == team else (
+            "Поражение" if win_team and team else "Матч завершён"
+        )
         return {
-            "status": "После матча", "details": f"{outcome} · {hero_name} · {kda}",
+            "status": "После матча", "details": outcome,
             "state": mode, "large_image": hero_image_url(hero_raw_name), "large_text": hero_name,
         }
     return None
@@ -681,10 +682,10 @@ class GSIHandler(BaseHTTPRequestHandler):
 class DotaActivityApp:
     def __init__(self, root: tk.Tk, start_hidden: bool = False):
         self.root = root
-        self.root.title(f"{APP_NAME} v{APP_VERSION}")
-        self.root.geometry("440x370")
-        self.root.minsize(400, 350)
-        self.root.configure(bg="#101116")
+        self.root.title(f"{APP_NAME} · UI Beta v{APP_VERSION}")
+        self.root.geometry("480x390")
+        self.root.minsize(420, 350)
+        self.root.configure(bg="#111116")
         self._window_icon = tk.PhotoImage(file=str(resource_path(APP_ICON_PNG)))
         self.root.iconphoto(True, self._window_icon)
         self.rpc = None
@@ -772,7 +773,7 @@ class DotaActivityApp:
                 widget.configure(text=self.tr(key))
             except tk.TclError:
                 pass
-        self.root.title(self.tr("window_title") + f" v{APP_VERSION}")
+        self.root.title(self.tr("window_title") + f" · UI Beta v{APP_VERSION}")
         if not self.dota_running:
             self.state_var.set(self.tr("game_closed"))
             self.details_var.set(self.tr("game_closed_details"))
@@ -813,36 +814,38 @@ class DotaActivityApp:
     def build_ui(self):
         style = ttk.Style()
         style.theme_use("clam")
-        style.configure("TFrame", background="#101116")
-        style.configure("TLabel", background="#101116", foreground="#e9e9ef", font=("Segoe UI", 10))
-        style.configure("Title.TLabel", font=("Segoe UI Semibold", 17), foreground="#f4c95d")
+        style.configure("TFrame", background="#111116")
+        style.configure("TLabel", background="#111116", foreground="#e9e9ef", font=("Segoe UI", 10))
+        style.configure("Title.TLabel", font=("Segoe UI Semibold", 17), foreground="#a78bfa")
         style.configure("Muted.TLabel", foreground="#9a9baa", font=("Segoe UI", 9))
-        style.configure("Action.TButton", font=("Segoe UI Semibold", 9), padding=(10, 6))
-        style.configure("TCheckbutton", background="#101116", foreground="#b7b9c6", font=("Segoe UI", 9))
+        style.configure("Action.TButton", font=("Segoe UI Semibold", 9), padding=(10, 6), background="#282336", foreground="#f3f3f7")
+        style.map("Action.TButton", background=[("active", "#3a3152")])
+        style.configure("TCheckbutton", background="#111116", foreground="#b7b9c6", font=("Segoe UI", 9))
         main = ttk.Frame(self.root, padding=14)
         main.pack(fill="both", expand=True)
         header = ttk.Frame(main)
         header.pack(fill="x", pady=(0, 10))
         brand = ttk.Frame(header)
-        brand.pack(anchor="w")
+        brand.pack(fill="x")
         self._brand_image = self._window_icon.subsample(32, 32)
-        tk.Label(brand, image=self._brand_image, bg="#101116", borderwidth=0).pack(side="left", padx=(0, 9))
+        tk.Label(brand, image=self._brand_image, bg="#111116", borderwidth=0).pack(side="left", padx=(0, 9))
         title_group = ttk.Frame(brand)
         title_group.pack(side="left", anchor="w")
         ttk.Label(title_group, text="DOTA ACTIVITY", style="Title.TLabel").pack(anchor="w")
         self.localized(ttk.Label(title_group, style="Muted.TLabel"), "brand_subtitle").pack(anchor="w", pady=(1, 0))
+        tk.Label(brand, text="UI BETA", bg="#29243a", fg="#c4b5fd", font=("Segoe UI Semibold", 8), padx=9, pady=5).pack(side="right", anchor="n")
 
-        card = tk.Frame(main, bg="#202230", padx=13, pady=11)
+        card = tk.Frame(main, bg="#201d2b", padx=13, pady=11, highlightthickness=1, highlightbackground="#39314d")
         card.pack(fill="x", pady=(0, 9))
-        self.localized(tk.Label(card, bg="#202230", fg="#9a9baa", font=("Segoe UI", 8, "bold")), "presence_header").pack(anchor="w")
-        tk.Label(card, textvariable=self.state_var, bg="#202230", fg="#f3f3f7", font=("Segoe UI Semibold", 14)).pack(anchor="w", pady=(3, 0))
-        tk.Label(card, textvariable=self.details_var, bg="#202230", fg="#c6c7d2", font=("Segoe UI", 9)).pack(anchor="w", pady=(1, 0))
-        tk.Label(card, textvariable=self.status_var, bg="#202230", fg="#f4c95d", font=("Segoe UI", 8), wraplength=360, justify="left").pack(anchor="w", pady=(5, 0))
+        self.localized(tk.Label(card, bg="#201d2b", fg="#a78bfa", font=("Segoe UI", 8, "bold")), "presence_header").pack(anchor="w")
+        tk.Label(card, textvariable=self.state_var, bg="#201d2b", fg="#f3f3f7", font=("Segoe UI Semibold", 14)).pack(anchor="w", pady=(3, 0))
+        tk.Label(card, textvariable=self.details_var, bg="#201d2b", fg="#c6c7d2", font=("Segoe UI", 9)).pack(anchor="w", pady=(1, 0))
+        tk.Label(card, textvariable=self.status_var, bg="#201d2b", fg="#a78bfa", font=("Segoe UI", 8), wraplength=400, justify="left").pack(anchor="w", pady=(5, 0))
 
-        gsi_panel = tk.Frame(main, bg="#181a21", padx=10, pady=8)
+        gsi_panel = tk.Frame(main, bg="#191820", padx=10, pady=8, highlightthickness=1, highlightbackground="#2b2935")
         gsi_panel.pack(fill="x", pady=(0, 9))
-        self.localized(tk.Label(gsi_panel, bg="#181a21", fg="#f4c95d", font=("Segoe UI Semibold", 8)), "gsi_title").pack(anchor="w")
-        tk.Label(gsi_panel, textvariable=self.gsi_var, bg="#181a21", fg="#b7b9c6", font=("Segoe UI", 8), wraplength=360, justify="left").pack(anchor="w", pady=(2, 0))
+        self.localized(tk.Label(gsi_panel, bg="#191820", fg="#a78bfa", font=("Segoe UI Semibold", 8)), "gsi_title").pack(anchor="w")
+        tk.Label(gsi_panel, textvariable=self.gsi_var, bg="#191820", fg="#b7b9c6", font=("Segoe UI", 8), wraplength=400, justify="left").pack(anchor="w", pady=(2, 0))
 
         actions = ttk.Frame(main)
         actions.pack(fill="x")
