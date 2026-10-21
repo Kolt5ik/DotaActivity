@@ -3,6 +3,7 @@ import tempfile
 import io
 import json
 import queue
+from unittest.mock import patch
 from pathlib import Path
 
 from app import DOTA_LOGO_URL, DISCORD_APPLICATION_ID, GSIHandler, find_dota_cfg_dir, gsi_config_text, install_gsi_config, localized_presence, presence_from_gsi, prettify_hero, steam_roots_from_vdf
@@ -41,13 +42,26 @@ class GsiParsingTests(unittest.TestCase):
     def test_ranked_presence_uses_hero_portrait(self):
         result = presence_from_gsi({
             "map": {"game_state": "DOTA_GAMERULES_STATE_GAME_IN_PROGRESS", "game_time": 90, "game_mode": 22},
-            "player": {"kills": 4, "deaths": 2, "assists": 7, "net_worth": 8400},
+            "player": {"kills": 4, "deaths": 2, "assists": 7, "net_worth": 1234567},
             "hero": {"name": "npc_dota_hero_axe"},
         })
         self.assertEqual(result["status"], "В игре")
-        self.assertEqual(result["details"], "Axe · 4/2/7 · 8 400 NW")
-        self.assertEqual(result["state"], "Рейтинг · All Pick")
+        self.assertEqual(result["details"], "Axe · Рейтинг · All Pick")
+        self.assertEqual(result["state"], "K/D/A 4/2/7 · 1 234 567 NW")
         self.assertEqual(result["large_image"], "https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/heroes/axe.png")
+        self.assertEqual(result["small_image"], DOTA_LOGO_URL)
+        english = localized_presence(result, "en")
+        self.assertEqual(english["details"], "Axe · Ranked · All Pick")
+        self.assertEqual(english["state"], "K/D/A 4/2/7 · 1 234 567 NW")
+
+    def test_match_clock_uses_gsi_game_time(self):
+        with patch("app.time.time", return_value=10_000):
+            result = presence_from_gsi({
+                "map": {"game_state": "DOTA_GAMERULES_STATE_GAME_IN_PROGRESS", "game_time": 321, "game_mode": 23},
+                "player": {"kills": 1, "deaths": 2, "assists": 3},
+                "hero": {"name": "npc_dota_hero_axe"},
+            })
+        self.assertEqual(result["start"], 9_679)
 
     def test_spectator_presence_does_not_show_watched_players_stats(self):
         result = presence_from_gsi({
@@ -129,6 +143,7 @@ class GsiParsingTests(unittest.TestCase):
             "hero": {"name": "npc_dota_hero_axe"},
         })
         self.assertEqual(result["details"], "Поражение")
+        self.assertEqual(localized_presence(result, "en")["details"], "Defeat")
 
     def test_discovers_dota_in_a_secondary_steam_library(self):
         with tempfile.TemporaryDirectory() as temporary:
