@@ -19,7 +19,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 APP_NAME = "Dota Activity"
-APP_VERSION = "0.0.11"
+APP_VERSION = "0.0.12"
 DISCORD_GAME_NAME = "Dota"
 GSI_PORT = 38174
 DISCORD_APPLICATION_ID = "1559228191195922513"
@@ -45,7 +45,8 @@ TEXT = {
         "window_title": "Dota Activity", "brand_subtitle": "Проект Kolt5ik · статус Dota в Discord",
         "presence_header": "СЕЙЧАС В DISCORD", "game_closed": "Dota не запущена",
         "game_closed_details": "Активность появится при запуске игры", "gsi_title": "DOTA 2",
-        "autostart": "Автозапуск Windows", "tray": "Свернуть в трей",
+        "tray": "Свернуть в трей",
+        "autostart_on": "Автозапуск Windows · Вкл.", "autostart_off": "Автозапуск Windows · Выкл.",
         "tray_open": "Открыть Dota Activity", "exit": "Выход",
         "language": "Язык", "check_updates": "Проверить обновления",
         "footnote": "Оставь приложение и Discord запущенными во время игры.",
@@ -78,7 +79,8 @@ TEXT = {
         "window_title": "Dota Activity", "brand_subtitle": "Kolt5ik project · Dota status for Discord",
         "presence_header": "CURRENT DISCORD STATUS", "game_closed": "Dota is not running",
         "game_closed_details": "Activity will appear when the game starts", "gsi_title": "DOTA 2",
-        "autostart": "Start with Windows", "tray": "Minimize to tray",
+        "tray": "Minimize to tray",
+        "autostart_on": "Start with Windows · On", "autostart_off": "Start with Windows · Off",
         "tray_open": "Open Dota Activity", "exit": "Exit",
         "language": "Language", "check_updates": "Check for updates",
         "footnote": "Keep the app and Discord running while you play.",
@@ -282,7 +284,7 @@ UI_STATUS_EN = {
     "Турнир": "Tournament", "Обучение": "Tutorial", "Главное меню": "Main menu",
     "Активность появится при запуске игры": "Activity will appear when the game starts",
     "Готовится к игре": "Getting ready to play", "Матч скоро начнётся": "Match starting soon",
-    "Победа": "Victory", "Матч завершён": "Match complete",
+    "Победа": "Victory", "Поражение": "Defeat", "Матч завершён": "Match complete",
     "Ожидаю запуска Dota 2": "Waiting for Dota 2", "Локальное подключение готово · ожидаю Discord": "Local connection ready · waiting for Discord",
     "Не удалось открыть локальный порт для Dota 2": "Could not open the local Dota 2 port",
     "Dota 2 запущена · подключаюсь к Discord": "Dota 2 is running · connecting to Discord",
@@ -305,7 +307,11 @@ def localized_presence_text(value: str, language: str) -> str:
     translated = UI_STATUS_EN.get(value)
     if translated is not None:
         return translated
-    for russian, english in (("Победа", "Victory"), ("Матч завершён", "Match complete")):
+    parts = value.split(" · ")
+    translated_parts = [UI_STATUS_EN.get(part, part) for part in parts]
+    if translated_parts != parts:
+        return " · ".join(translated_parts)
+    for russian, english in (("Победа", "Victory"), ("Поражение", "Defeat"), ("Матч завершён", "Match complete")):
         prefix = russian + " · "
         if value.startswith(prefix):
             return english + value[len(russian):]
@@ -315,7 +321,7 @@ def localized_presence_text(value: str, language: str) -> str:
 def localized_presence(data: dict, language: str) -> dict:
     """Return the presence payload with visible text translated for Discord."""
     result = dict(data)
-    for key in ("status", "details", "state", "large_text"):
+    for key in ("status", "details", "state", "large_text", "small_text"):
         value = result.get(key)
         if isinstance(value, str):
             result[key] = localized_presence_text(value, language)
@@ -533,15 +539,18 @@ def presence_from_gsi(payload: dict) -> dict | None:
                 "status": "Смотрит матч", "details": "Наблюдает за матчем", "state": mode,
                 "large_image": DOTA_LOGO_URL, "large_text": "Dota 2", "start": start,
             }
-        kills, deaths, assists = (player.get(k, 0) for k in ("kills", "deaths", "assists"))
-        details = f"{hero_name} · {kills}/{deaths}/{assists}"
-        net_worth = player.get("net_worth")
-        if isinstance(net_worth, int):
-            details += f" · {net_worth:,} NW".replace(",", " ")
+        stat_keys = ("kills", "deaths", "assists")
+        stats_available = any(key in player for key in stat_keys)
+        if stats_available:
+            kills, deaths, assists = (player.get(key, 0) for key in stat_keys)
+            details = f"{hero_name} · {kills}/{deaths}/{assists}" if hero_name else f"{kills}/{deaths}/{assists}"
+        else:
+            details = hero_name or "В игре"
         start = int(time.time() - game_time) if isinstance(game_time, (int, float)) and game_time > 0 else None
         return {
             "status": "В игре", "details": details, "state": mode,
-            "large_image": hero_image_url(hero_raw_name), "large_text": hero_name, "start": start,
+            "large_image": hero_image_url(hero_raw_name), "large_text": hero_name,
+            "small_image": DOTA_LOGO_URL, "small_text": "Dota 2", "start": start,
         }
 
     if state == "DOTA_GAMERULES_STATE_POST_GAME":
@@ -552,10 +561,12 @@ def presence_from_gsi(payload: dict) -> dict | None:
             }
         win_team = map_data.get("win_team")
         team = player.get("team_name")
-        outcome = "Победа" if win_team and team and win_team == team else "Матч завершён"
-        kda = f"{player.get('kills', 0)}/{player.get('deaths', 0)}/{player.get('assists', 0)}"
+        if win_team and team:
+            outcome = "Победа" if win_team == team else "Поражение"
+        else:
+            outcome = "Матч завершён"
         return {
-            "status": "После матча", "details": f"{outcome} · {hero_name} · {kda}",
+            "status": "После матча", "details": outcome,
             "state": mode, "large_image": hero_image_url(hero_raw_name), "large_text": hero_name,
         }
     return None
@@ -682,9 +693,9 @@ class DotaActivityApp:
     def __init__(self, root: tk.Tk, start_hidden: bool = False):
         self.root = root
         self.root.title(f"{APP_NAME} v{APP_VERSION}")
-        self.root.geometry("440x370")
-        self.root.minsize(400, 350)
-        self.root.configure(bg="#101116")
+        self.root.geometry("480x390")
+        self.root.minsize(420, 350)
+        self.root.configure(bg="#111116")
         self._window_icon = tk.PhotoImage(file=str(resource_path(APP_ICON_PNG)))
         self.root.iconphoto(True, self._window_icon)
         self.rpc = None
@@ -773,6 +784,7 @@ class DotaActivityApp:
             except tk.TclError:
                 pass
         self.root.title(self.tr("window_title") + f" v{APP_VERSION}")
+        self.refresh_settings_controls()
         if not self.dota_running:
             self.state_var.set(self.tr("game_closed"))
             self.details_var.set(self.tr("game_closed_details"))
@@ -813,68 +825,104 @@ class DotaActivityApp:
     def build_ui(self):
         style = ttk.Style()
         style.theme_use("clam")
-        style.configure("TFrame", background="#101116")
-        style.configure("TLabel", background="#101116", foreground="#e9e9ef", font=("Segoe UI", 10))
-        style.configure("Title.TLabel", font=("Segoe UI Semibold", 17), foreground="#f4c95d")
+        style.configure("TFrame", background="#111116")
+        style.configure("TLabel", background="#111116", foreground="#e9e9ef", font=("Segoe UI", 10))
+        style.configure("Title.TLabel", font=("Segoe UI Semibold", 17), foreground="#a78bfa")
         style.configure("Muted.TLabel", foreground="#9a9baa", font=("Segoe UI", 9))
-        style.configure("Action.TButton", font=("Segoe UI Semibold", 9), padding=(10, 6))
-        style.configure("TCheckbutton", background="#101116", foreground="#b7b9c6", font=("Segoe UI", 9))
+        style.configure(
+            "Action.TButton", font=("Segoe UI Semibold", 9), padding=(10, 6),
+            background="#282336", foreground="#f3f3f7", relief="flat", borderwidth=0,
+            bordercolor="#282336", lightcolor="#282336", darkcolor="#282336",
+            focuscolor="#282336", focusthickness=0,
+        )
+        style.map(
+            "Action.TButton", background=[("active", "#3a3152")],
+            bordercolor=[("active", "#3a3152")], lightcolor=[("active", "#3a3152")],
+            darkcolor=[("active", "#3a3152")],
+        )
+        style.configure(
+            "Action.TMenubutton", font=("Segoe UI Semibold", 9), padding=(10, 6),
+            background="#282336", foreground="#f3f3f7", arrowcolor="#a78bfa",
+            relief="flat", borderwidth=0, bordercolor="#282336", lightcolor="#282336",
+            darkcolor="#282336", focuscolor="#282336", focusthickness=0,
+        )
+        style.map(
+            "Action.TMenubutton", background=[("active", "#3a3152")],
+            bordercolor=[("active", "#3a3152")], lightcolor=[("active", "#3a3152")],
+            darkcolor=[("active", "#3a3152")],
+        )
+        style.configure(
+            "Selected.TButton", font=("Segoe UI Semibold", 9), padding=(10, 6),
+            background="#3a3152", foreground="#f3f3f7", relief="flat", borderwidth=0,
+            bordercolor="#3a3152", lightcolor="#3a3152", darkcolor="#3a3152",
+            focuscolor="#3a3152", focusthickness=0,
+        )
+        style.map(
+            "Selected.TButton", background=[("active", "#4a3b67")],
+            bordercolor=[("active", "#4a3b67")], lightcolor=[("active", "#4a3b67")],
+            darkcolor=[("active", "#4a3b67")],
+        )
+        style.configure("TCheckbutton", background="#111116", foreground="#b7b9c6", font=("Segoe UI", 9))
         main = ttk.Frame(self.root, padding=14)
         main.pack(fill="both", expand=True)
         header = ttk.Frame(main)
         header.pack(fill="x", pady=(0, 10))
         brand = ttk.Frame(header)
-        brand.pack(anchor="w")
+        brand.pack(fill="x")
         self._brand_image = self._window_icon.subsample(32, 32)
-        tk.Label(brand, image=self._brand_image, bg="#101116", borderwidth=0).pack(side="left", padx=(0, 9))
+        tk.Label(brand, image=self._brand_image, bg="#111116", borderwidth=0).pack(side="left", padx=(0, 9))
         title_group = ttk.Frame(brand)
         title_group.pack(side="left", anchor="w")
         ttk.Label(title_group, text="DOTA ACTIVITY", style="Title.TLabel").pack(anchor="w")
         self.localized(ttk.Label(title_group, style="Muted.TLabel"), "brand_subtitle").pack(anchor="w", pady=(1, 0))
 
-        card = tk.Frame(main, bg="#202230", padx=13, pady=11)
+        card = tk.Frame(main, bg="#201d2b", padx=13, pady=11, highlightthickness=1, highlightbackground="#39314d")
         card.pack(fill="x", pady=(0, 9))
-        self.localized(tk.Label(card, bg="#202230", fg="#9a9baa", font=("Segoe UI", 8, "bold")), "presence_header").pack(anchor="w")
-        tk.Label(card, textvariable=self.state_var, bg="#202230", fg="#f3f3f7", font=("Segoe UI Semibold", 14)).pack(anchor="w", pady=(3, 0))
-        tk.Label(card, textvariable=self.details_var, bg="#202230", fg="#c6c7d2", font=("Segoe UI", 9)).pack(anchor="w", pady=(1, 0))
-        tk.Label(card, textvariable=self.status_var, bg="#202230", fg="#f4c95d", font=("Segoe UI", 8), wraplength=360, justify="left").pack(anchor="w", pady=(5, 0))
+        self.localized(tk.Label(card, bg="#201d2b", fg="#a78bfa", font=("Segoe UI", 8, "bold")), "presence_header").pack(anchor="w")
+        tk.Label(card, textvariable=self.state_var, bg="#201d2b", fg="#f3f3f7", font=("Segoe UI Semibold", 14)).pack(anchor="w", pady=(3, 0))
+        tk.Label(card, textvariable=self.details_var, bg="#201d2b", fg="#c6c7d2", font=("Segoe UI", 9)).pack(anchor="w", pady=(1, 0))
+        status_label = tk.Label(card, textvariable=self.status_var, bg="#201d2b", fg="#a78bfa", font=("Segoe UI", 8), wraplength=400, justify="left")
+        status_label.pack(anchor="w", pady=(5, 0))
 
-        gsi_panel = tk.Frame(main, bg="#181a21", padx=10, pady=8)
+        gsi_panel = tk.Frame(main, bg="#191820", padx=10, pady=8, highlightthickness=1, highlightbackground="#2b2935")
         gsi_panel.pack(fill="x", pady=(0, 9))
-        self.localized(tk.Label(gsi_panel, bg="#181a21", fg="#f4c95d", font=("Segoe UI Semibold", 8)), "gsi_title").pack(anchor="w")
-        tk.Label(gsi_panel, textvariable=self.gsi_var, bg="#181a21", fg="#b7b9c6", font=("Segoe UI", 8), wraplength=360, justify="left").pack(anchor="w", pady=(2, 0))
+        self.localized(tk.Label(gsi_panel, bg="#191820", fg="#a78bfa", font=("Segoe UI Semibold", 8)), "gsi_title").pack(anchor="w")
+        gsi_label = tk.Label(gsi_panel, textvariable=self.gsi_var, bg="#191820", fg="#b7b9c6", font=("Segoe UI", 8), wraplength=400, justify="left")
+        gsi_label.pack(anchor="w", pady=(2, 0))
 
         actions = ttk.Frame(main)
         actions.pack(fill="x")
-        self.localized(ttk.Checkbutton(
-            actions, variable=self.autostart_var,
-            command=self.toggle_autostart,
-        ), "autostart").pack(side="left")
-        self.localized(ttk.Button(actions, style="Action.TButton", command=self.hide_to_tray), "tray").pack(side="right")
+        left_controls = ttk.Frame(actions)
+        left_controls.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        right_controls = ttk.Frame(actions)
+        right_controls.pack(side="right", fill="x", expand=True)
 
-        footer = ttk.Frame(main)
-        footer.pack(fill="x", pady=(8, 0))
-        language_row = ttk.Frame(footer)
-        language_row.pack(side="left")
-        self.localized(ttk.Label(language_row, style="Muted.TLabel"), "language").pack(side="left")
-        language_box = ttk.Combobox(
-            language_row, textvariable=self.language_var, values=("Русский", "English"),
-            state="readonly", width=9,
+        self.autostart_button = ttk.Button(
+            left_controls, style="Action.TButton", command=self.toggle_autostart,
         )
-        language_box.pack(side="left", padx=(6, 0))
-        language_box.bind("<<ComboboxSelected>>", self.change_language)
+        self.autostart_button.pack(fill="x", pady=(0, 6))
+        self.language_menu_button = ttk.Menubutton(left_controls, style="Action.TMenubutton")
+        self.language_menu_button.pack(fill="x")
+        self.language_menu = tk.Menu(
+            self.language_menu_button, tearoff=False, bg="#201d2b", fg="#f3f3f7",
+            activebackground="#3a3152", activeforeground="#ffffff", bd=0,
+        )
+        self.language_menu.add_command(label="Русский", command=lambda: self.select_language("ru"))
+        self.language_menu.add_command(label="English", command=lambda: self.select_language("en"))
+        self.language_menu_button.configure(menu=self.language_menu)
+
+        self.localized(ttk.Button(right_controls, style="Action.TButton", command=self.hide_to_tray), "tray").pack(fill="x", pady=(0, 6))
         self.update_button = self.localized(ttk.Button(
-            footer, style="Action.TButton", command=lambda: self.check_for_updates(manual=True),
+            right_controls, style="Action.TButton", command=lambda: self.check_for_updates(manual=True),
         ), "check_updates")
-        self.update_button.pack(side="right")
+        self.update_button.pack(fill="x")
+        self.refresh_settings_controls()
 
         def resize_wrapped_labels(event):
             wrap = max(220, event.width - 48)
-            for label in (status_label, gsi_label):
-                label.configure(wraplength=wrap)
+            status_label.configure(wraplength=wrap)
+            gsi_label.configure(wraplength=wrap)
 
-        status_label = card.winfo_children()[-1]
-        gsi_label = gsi_panel.winfo_children()[-1]
         main.bind("<Configure>", resize_wrapped_labels)
 
     def check_for_updates(self, manual: bool = False):
@@ -1030,14 +1078,34 @@ class DotaActivityApp:
             self.status_var.set(self.tr("server_error"))
 
     def toggle_autostart(self):
-        enabled = bool(self.autostart_var.get())
+        enabled = not bool(self.autostart_var.get())
+        self.autostart_var.set(enabled)
         try:
             set_windows_autostart(enabled)
         except (OSError, ImportError) as exc:
             self.autostart_var.set(not enabled)
+            self.refresh_settings_controls()
             messagebox.showerror(self.tr("autostart_error_title"), self.tr("autostart_error", error=exc))
             return
+        self.refresh_settings_controls()
         self.status_var.set(self.tr("autostart_enabled" if enabled else "autostart_disabled"))
+
+    def refresh_settings_controls(self):
+        autostart_button = getattr(self, "autostart_button", None)
+        if autostart_button is not None:
+            enabled = bool(self.autostart_var.get())
+            autostart_button.configure(
+                text=self.tr("autostart_on" if enabled else "autostart_off"),
+                style="Selected.TButton" if enabled else "Action.TButton",
+            )
+        language_button = getattr(self, "language_menu_button", None)
+        if language_button is not None:
+            language = self.language_var.get()
+            language_button.configure(text=f'{self.tr("language")} · {language}')
+
+    def select_language(self, language: str):
+        self.language_var.set("English" if language == "en" else "Русский")
+        self.change_language()
 
     def try_connect(self):
         if not self.dota_running:
@@ -1078,6 +1146,9 @@ class DotaActivityApp:
                 "large_image": discord_data.get("large_image", DOTA_LOGO_URL),
                 "large_text": discord_data.get("large_text", "Dota 2"),
             }
+            if discord_data.get("small_image"):
+                kwargs["small_image"] = discord_data["small_image"]
+                kwargs["small_text"] = discord_data.get("small_text", "Dota 2")
             if discord_data.get("start"):
                 kwargs["start"] = discord_data["start"]
             self.rpc.update(**kwargs)
