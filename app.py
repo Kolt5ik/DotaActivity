@@ -305,6 +305,10 @@ def localized_presence_text(value: str, language: str) -> str:
     translated = UI_STATUS_EN.get(value)
     if translated is not None:
         return translated
+    parts = value.split(" · ")
+    translated_parts = [UI_STATUS_EN.get(part, part) for part in parts]
+    if translated_parts != parts:
+        return " · ".join(translated_parts)
     for russian, english in (("Победа", "Victory"), ("Поражение", "Defeat"), ("Матч завершён", "Match complete")):
         prefix = russian + " · "
         if value.startswith(prefix):
@@ -315,7 +319,7 @@ def localized_presence_text(value: str, language: str) -> str:
 def localized_presence(data: dict, language: str) -> dict:
     """Return the presence payload with visible text translated for Discord."""
     result = dict(data)
-    for key in ("status", "details", "state", "large_text"):
+    for key in ("status", "details", "state", "large_text", "small_text"):
         value = result.get(key)
         if isinstance(value, str):
             result[key] = localized_presence_text(value, language)
@@ -533,15 +537,24 @@ def presence_from_gsi(payload: dict) -> dict | None:
                 "status": "Смотрит матч", "details": "Наблюдает за матчем", "state": mode,
                 "large_image": DOTA_LOGO_URL, "large_text": "Dota 2", "start": start,
             }
-        kills, deaths, assists = (player.get(k, 0) for k in ("kills", "deaths", "assists"))
-        details = f"{hero_name} · {kills}/{deaths}/{assists}"
-        net_worth = player.get("net_worth")
-        if isinstance(net_worth, int):
-            details += f" · {net_worth:,} NW".replace(",", " ")
+        stat_keys = ("kills", "deaths", "assists")
+        stats_available = any(key in player for key in stat_keys)
+        kills, deaths, assists = (player.get(key, 0) for key in stat_keys)
+        if stats_available:
+            details = " · ".join(part for part in (hero_name, mode) if part) or "В игре"
+            stat_parts = [f"K/D/A {kills}/{deaths}/{assists}"]
+            net_worth = player.get("net_worth")
+            if isinstance(net_worth, int):
+                stat_parts.append(f"{net_worth:,} NW".replace(",", " "))
+            state_text = " · ".join(stat_parts)
+        else:
+            details = hero_name or "В игре"
+            state_text = mode
         start = int(time.time() - game_time) if isinstance(game_time, (int, float)) and game_time > 0 else None
         return {
-            "status": "В игре", "details": details, "state": mode,
-            "large_image": hero_image_url(hero_raw_name), "large_text": hero_name, "start": start,
+            "status": "В игре", "details": details, "state": state_text,
+            "large_image": hero_image_url(hero_raw_name), "large_text": hero_name,
+            "small_image": DOTA_LOGO_URL, "small_text": "Dota 2", "start": start,
         }
 
     if state == "DOTA_GAMERULES_STATE_POST_GAME":
@@ -1080,6 +1093,9 @@ class DotaActivityApp:
                 "large_image": discord_data.get("large_image", DOTA_LOGO_URL),
                 "large_text": discord_data.get("large_text", "Dota 2"),
             }
+            if discord_data.get("small_image"):
+                kwargs["small_image"] = discord_data["small_image"]
+                kwargs["small_text"] = discord_data.get("small_text", "Dota 2")
             if discord_data.get("start"):
                 kwargs["start"] = discord_data["start"]
             self.rpc.update(**kwargs)
