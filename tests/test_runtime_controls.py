@@ -86,6 +86,41 @@ class RuntimeControlTests(unittest.TestCase):
         self.assertIn("--background", command)
         self.assertIn("Dota Activity.exe", command)
 
+    def test_autostart_button_toggles_windows_setting(self):
+        class Value:
+            def __init__(self, value=None): self.value = value
+            def get(self): return self.value
+            def set(self, value): self.value = value
+
+        instance = app.DotaActivityApp.__new__(app.DotaActivityApp)
+        instance.autostart_var = Value(False)
+        instance.language = "en"
+        instance.status_var = Value()
+        with patch.object(app, "set_windows_autostart") as set_autostart:
+            instance.toggle_autostart()
+
+        set_autostart.assert_called_once_with(True)
+        self.assertTrue(instance.autostart_var.get())
+        self.assertEqual(instance.status_var.get(), app.TEXT["en"]["autostart_enabled"])
+
+    def test_autostart_button_rolls_back_when_windows_rejects_change(self):
+        class Value:
+            def __init__(self, value=None): self.value = value
+            def get(self): return self.value
+            def set(self, value): self.value = value
+
+        instance = app.DotaActivityApp.__new__(app.DotaActivityApp)
+        instance.autostart_var = Value(False)
+        instance.language = "en"
+        with (
+            patch.object(app, "set_windows_autostart", side_effect=OSError("access denied")),
+            patch.object(app.messagebox, "showerror") as show_error,
+        ):
+            instance.toggle_autostart()
+
+        self.assertFalse(instance.autostart_var.get())
+        show_error.assert_called_once()
+
     def test_existing_autostart_entry_is_migrated_to_current_executable(self):
         class FakeKey:
             def __enter__(self): return self

@@ -45,7 +45,8 @@ TEXT = {
         "window_title": "Dota Activity", "brand_subtitle": "Проект Kolt5ik · статус Dota в Discord",
         "presence_header": "СЕЙЧАС В DISCORD", "game_closed": "Dota не запущена",
         "game_closed_details": "Активность появится при запуске игры", "gsi_title": "DOTA 2",
-        "autostart": "Автозапуск Windows", "tray": "Свернуть в трей",
+        "tray": "Свернуть в трей",
+        "autostart_on": "Автозапуск Windows · Вкл.", "autostart_off": "Автозапуск Windows · Выкл.",
         "tray_open": "Открыть Dota Activity", "exit": "Выход",
         "language": "Язык", "check_updates": "Проверить обновления",
         "footnote": "Оставь приложение и Discord запущенными во время игры.",
@@ -78,7 +79,8 @@ TEXT = {
         "window_title": "Dota Activity", "brand_subtitle": "Kolt5ik project · Dota status for Discord",
         "presence_header": "CURRENT DISCORD STATUS", "game_closed": "Dota is not running",
         "game_closed_details": "Activity will appear when the game starts", "gsi_title": "DOTA 2",
-        "autostart": "Start with Windows", "tray": "Minimize to tray",
+        "tray": "Minimize to tray",
+        "autostart_on": "Start with Windows · On", "autostart_off": "Start with Windows · Off",
         "tray_open": "Open Dota Activity", "exit": "Exit",
         "language": "Language", "check_updates": "Check for updates",
         "footnote": "Keep the app and Discord running while you play.",
@@ -782,6 +784,7 @@ class DotaActivityApp:
             except tk.TclError:
                 pass
         self.root.title(self.tr("window_title") + f" v{APP_VERSION}")
+        self.refresh_settings_controls()
         if not self.dota_running:
             self.state_var.set(self.tr("game_closed"))
             self.details_var.set(self.tr("game_closed_details"))
@@ -826,8 +829,39 @@ class DotaActivityApp:
         style.configure("TLabel", background="#111116", foreground="#e9e9ef", font=("Segoe UI", 10))
         style.configure("Title.TLabel", font=("Segoe UI Semibold", 17), foreground="#a78bfa")
         style.configure("Muted.TLabel", foreground="#9a9baa", font=("Segoe UI", 9))
-        style.configure("Action.TButton", font=("Segoe UI Semibold", 9), padding=(10, 6), background="#282336", foreground="#f3f3f7")
-        style.map("Action.TButton", background=[("active", "#3a3152")])
+        style.configure(
+            "Action.TButton", font=("Segoe UI Semibold", 9), padding=(10, 6),
+            background="#282336", foreground="#f3f3f7", relief="flat", borderwidth=0,
+            bordercolor="#282336", lightcolor="#282336", darkcolor="#282336",
+            focuscolor="#282336", focusthickness=0,
+        )
+        style.map(
+            "Action.TButton", background=[("active", "#3a3152")],
+            bordercolor=[("active", "#3a3152")], lightcolor=[("active", "#3a3152")],
+            darkcolor=[("active", "#3a3152")],
+        )
+        style.configure(
+            "Action.TMenubutton", font=("Segoe UI Semibold", 9), padding=(10, 6),
+            background="#282336", foreground="#f3f3f7", arrowcolor="#a78bfa",
+            relief="flat", borderwidth=0, bordercolor="#282336", lightcolor="#282336",
+            darkcolor="#282336", focuscolor="#282336", focusthickness=0,
+        )
+        style.map(
+            "Action.TMenubutton", background=[("active", "#3a3152")],
+            bordercolor=[("active", "#3a3152")], lightcolor=[("active", "#3a3152")],
+            darkcolor=[("active", "#3a3152")],
+        )
+        style.configure(
+            "Selected.TButton", font=("Segoe UI Semibold", 9), padding=(10, 6),
+            background="#3a3152", foreground="#f3f3f7", relief="flat", borderwidth=0,
+            bordercolor="#3a3152", lightcolor="#3a3152", darkcolor="#3a3152",
+            focuscolor="#3a3152", focusthickness=0,
+        )
+        style.map(
+            "Selected.TButton", background=[("active", "#4a3b67")],
+            bordercolor=[("active", "#4a3b67")], lightcolor=[("active", "#4a3b67")],
+            darkcolor=[("active", "#4a3b67")],
+        )
         style.configure("TCheckbutton", background="#111116", foreground="#b7b9c6", font=("Segoe UI", 9))
         main = ttk.Frame(self.root, padding=14)
         main.pack(fill="both", expand=True)
@@ -858,27 +892,31 @@ class DotaActivityApp:
 
         actions = ttk.Frame(main)
         actions.pack(fill="x")
-        self.localized(ttk.Checkbutton(
-            actions, variable=self.autostart_var,
-            command=self.toggle_autostart,
-        ), "autostart").pack(side="left")
-        self.localized(ttk.Button(actions, style="Action.TButton", command=self.hide_to_tray), "tray").pack(side="right")
+        left_controls = ttk.Frame(actions)
+        left_controls.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        right_controls = ttk.Frame(actions)
+        right_controls.pack(side="right", fill="x", expand=True)
 
-        footer = ttk.Frame(main)
-        footer.pack(fill="x", pady=(8, 0))
-        language_row = ttk.Frame(footer)
-        language_row.pack(side="left")
-        self.localized(ttk.Label(language_row, style="Muted.TLabel"), "language").pack(side="left")
-        language_box = ttk.Combobox(
-            language_row, textvariable=self.language_var, values=("Русский", "English"),
-            state="readonly", width=9,
+        self.autostart_button = ttk.Button(
+            left_controls, style="Action.TButton", command=self.toggle_autostart,
         )
-        language_box.pack(side="left", padx=(6, 0))
-        language_box.bind("<<ComboboxSelected>>", self.change_language)
+        self.autostart_button.pack(fill="x", pady=(0, 6))
+        self.language_menu_button = ttk.Menubutton(left_controls, style="Action.TMenubutton")
+        self.language_menu_button.pack(fill="x")
+        self.language_menu = tk.Menu(
+            self.language_menu_button, tearoff=False, bg="#201d2b", fg="#f3f3f7",
+            activebackground="#3a3152", activeforeground="#ffffff", bd=0,
+        )
+        self.language_menu.add_command(label="Русский", command=lambda: self.select_language("ru"))
+        self.language_menu.add_command(label="English", command=lambda: self.select_language("en"))
+        self.language_menu_button.configure(menu=self.language_menu)
+
+        self.localized(ttk.Button(right_controls, style="Action.TButton", command=self.hide_to_tray), "tray").pack(fill="x", pady=(0, 6))
         self.update_button = self.localized(ttk.Button(
-            footer, style="Action.TButton", command=lambda: self.check_for_updates(manual=True),
+            right_controls, style="Action.TButton", command=lambda: self.check_for_updates(manual=True),
         ), "check_updates")
-        self.update_button.pack(side="right")
+        self.update_button.pack(fill="x")
+        self.refresh_settings_controls()
 
         def resize_wrapped_labels(event):
             wrap = max(220, event.width - 48)
@@ -1040,14 +1078,34 @@ class DotaActivityApp:
             self.status_var.set(self.tr("server_error"))
 
     def toggle_autostart(self):
-        enabled = bool(self.autostart_var.get())
+        enabled = not bool(self.autostart_var.get())
+        self.autostart_var.set(enabled)
         try:
             set_windows_autostart(enabled)
         except (OSError, ImportError) as exc:
             self.autostart_var.set(not enabled)
+            self.refresh_settings_controls()
             messagebox.showerror(self.tr("autostart_error_title"), self.tr("autostart_error", error=exc))
             return
+        self.refresh_settings_controls()
         self.status_var.set(self.tr("autostart_enabled" if enabled else "autostart_disabled"))
+
+    def refresh_settings_controls(self):
+        autostart_button = getattr(self, "autostart_button", None)
+        if autostart_button is not None:
+            enabled = bool(self.autostart_var.get())
+            autostart_button.configure(
+                text=self.tr("autostart_on" if enabled else "autostart_off"),
+                style="Selected.TButton" if enabled else "Action.TButton",
+            )
+        language_button = getattr(self, "language_menu_button", None)
+        if language_button is not None:
+            language = self.language_var.get()
+            language_button.configure(text=f'{self.tr("language")} · {language}')
+
+    def select_language(self, language: str):
+        self.language_var.set("English" if language == "en" else "Русский")
+        self.change_language()
 
     def try_connect(self):
         if not self.dota_running:
