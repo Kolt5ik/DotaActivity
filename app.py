@@ -539,20 +539,14 @@ def presence_from_gsi(payload: dict) -> dict | None:
             }
         stat_keys = ("kills", "deaths", "assists")
         stats_available = any(key in player for key in stat_keys)
-        kills, deaths, assists = (player.get(key, 0) for key in stat_keys)
         if stats_available:
-            details = " · ".join(part for part in (hero_name, mode) if part) or "В игре"
-            stat_parts = [f"K/D/A {kills}/{deaths}/{assists}"]
-            net_worth = player.get("net_worth")
-            if isinstance(net_worth, int):
-                stat_parts.append(f"{net_worth:,} NW".replace(",", " "))
-            state_text = " · ".join(stat_parts)
+            kills, deaths, assists = (player.get(key, 0) for key in stat_keys)
+            details = f"{hero_name} · {kills}/{deaths}/{assists}" if hero_name else f"{kills}/{deaths}/{assists}"
         else:
             details = hero_name or "В игре"
-            state_text = mode
         start = int(time.time() - game_time) if isinstance(game_time, (int, float)) and game_time > 0 else None
         return {
-            "status": "В игре", "details": details, "state": state_text,
+            "status": "В игре", "details": details, "state": mode,
             "large_image": hero_image_url(hero_raw_name), "large_text": hero_name,
             "small_image": DOTA_LOGO_URL, "small_text": "Dota 2", "start": start,
         }
