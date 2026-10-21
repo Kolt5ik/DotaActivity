@@ -46,13 +46,26 @@ class GsiParsingTests(unittest.TestCase):
             "hero": {"name": "npc_dota_hero_axe"},
         })
         self.assertEqual(result["status"], "В игре")
-        self.assertEqual(result["details"], "Axe · Рейтинг · All Pick")
-        self.assertEqual(result["state"], "K/D/A 4/2/7 · 1 234 567 NW")
+        self.assertEqual(result["details"], "Axe · 4/2/7")
+        self.assertEqual(result["state"], "Рейтинг · All Pick")
         self.assertEqual(result["large_image"], "https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/heroes/axe.png")
         self.assertEqual(result["small_image"], DOTA_LOGO_URL)
         english = localized_presence(result, "en")
-        self.assertEqual(english["details"], "Axe · Ranked · All Pick")
-        self.assertEqual(english["state"], "K/D/A 4/2/7 · 1 234 567 NW")
+        self.assertEqual(english["details"], "Axe · 4/2/7")
+        self.assertEqual(english["state"], "Ranked · All Pick")
+        self.assertNotIn("NW", result["details"] + result["state"])
+
+    def test_practice_presence_uses_same_numeric_format_in_both_languages(self):
+        result = presence_from_gsi({
+            "map": {"game_state": "DOTA_GAMERULES_STATE_GAME_IN_PROGRESS", "game_mode": 1, "matchid": 0},
+            "player": {"kills": 10, "deaths": 2, "assists": 5},
+            "hero": {"name": "npc_dota_hero_undying"},
+        })
+        english = localized_presence(result, "en")
+        self.assertEqual(result["details"], "Undying · 10/2/5")
+        self.assertEqual(english["details"], result["details"])
+        self.assertEqual(result["state"], "Тренировка")
+        self.assertEqual(english["state"], "Practice")
 
     def test_match_clock_uses_gsi_game_time(self):
         with patch("app.time.time", return_value=10_000):
