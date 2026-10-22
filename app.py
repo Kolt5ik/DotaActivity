@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import csv
 import ctypes
+import hashlib
+import hmac
+import http.client
 import json
+import math
 import os
 import queue
 import re
@@ -39,6 +43,7 @@ GITHUB_RELEASE_PREFIX = "https://github.com/Kolt5ik/DotaActivity/releases/downlo
 MAX_UPDATE_BYTES = 250 * 1024 * 1024
 _INSTANCE_MUTEX_HANDLE = None
 INSTANCE_MUTEX_NAME = r"Local\DotaActivity.Singleton"
+_NO_GSI_EVENT = object()
 
 TEXT = {
     "ru": {
@@ -48,9 +53,10 @@ TEXT = {
         "tray": "Свернуть в трей",
         "autostart_on": "Автозапуск Windows · Вкл.", "autostart_off": "Автозапуск Windows · Выкл.",
         "tray_open": "Открыть Dota Activity", "exit": "Выход",
-        "language": "Язык", "check_updates": "Проверить обновления",
+        "language": "Язык", "check_updates": "Проверить обновления", "gsi_repair": "Восстановить GSI",
         "footnote": "Оставь приложение и Discord запущенными во время игры.",
         "waiting": "Ожидаю запуска Dota 2", "game_started": "Dota 2 запущена · подключаюсь к Discord",
+        "app_id_missing": "Не задан Discord Application ID проекта",
         "rpc_connected": "Подключено к Discord", "rpc_wait": "Открой настольный Discord · повторное подключение…",
         "rpc_published": "Статус Dota 2 опубликован в Discord", "rpc_lost": "Потеряна связь с Discord · переподключаюсь…",
         "server_ready": "Локальное подключение готово · ожидаю Discord", "server_error": "Не удалось открыть локальный порт для Dota 2",
@@ -82,9 +88,10 @@ TEXT = {
         "tray": "Minimize to tray",
         "autostart_on": "Start with Windows · On", "autostart_off": "Start with Windows · Off",
         "tray_open": "Open Dota Activity", "exit": "Exit",
-        "language": "Language", "check_updates": "Check for updates",
+        "language": "Language", "check_updates": "Check for updates", "gsi_repair": "Repair GSI",
         "footnote": "Keep the app and Discord running while you play.",
         "waiting": "Waiting for Dota 2", "game_started": "Dota 2 is running · connecting to Discord",
+        "app_id_missing": "The project Discord Application ID is not configured",
         "rpc_connected": "Connected to Discord", "rpc_wait": "Open the Discord desktop app · reconnecting…",
         "rpc_published": "Dota 2 status posted to Discord", "rpc_lost": "Discord connection lost · reconnecting…",
         "server_ready": "Local connection ready · waiting for Discord", "server_error": "Could not open the local Dota 2 port",
@@ -117,6 +124,8 @@ def parse_release_update(release: dict, current_version: str = APP_VERSION) -> d
     if not isinstance(release, dict) or release.get("draft") or release.get("prerelease"):
         return None
     tag = release.get("tag_name", "")
+    if not isinstance(tag, str):
+        return None
     match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", tag)
     current = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", current_version)
     if not match or not current:
@@ -132,9 +141,13 @@ def parse_release_update(release: dict, current_version: str = APP_VERSION) -> d
         if not isinstance(asset, dict) or asset.get("name") != asset_name:
             continue
         url = asset.get("browser_download_url", "")
-        if isinstance(url, str) and url.startswith(GITHUB_RELEASE_PREFIX):
+        expected_url = f"{GITHUB_RELEASE_PREFIX}{tag}/{asset_name}"
+        digest = asset.get("digest")
+        if (url == expected_url and isinstance(digest, str)
+                and re.fullmatch(r"sha256:[0-9a-fA-F]{64}", digest)):
             return {"version": match.group(0).removeprefix("v"), "url": url,
-                    "name": asset_name, "notes": str(release.get("body") or "").strip()}
+                    "name": asset_name, "sha256": digest.split(":", 1)[1].lower(),
+                    "notes": str(release.get("body") or "").strip()}
     return None
 
 
@@ -149,11 +162,30 @@ def compare_versions(first: str, second: str) -> int:
     return (a > b) - (a < b)
 
 
+def sha256_matches(actual: str, expected: str) -> bool:
+    return bool(
+        isinstance(actual, str) and isinstance(expected, str)
+        and re.fullmatch(r"[0-9a-fA-F]{64}", actual)
+        and re.fullmatch(r"[0-9a-fA-F]{64}", expected)
+        and hmac.compare_digest(actual.lower(), expected.lower())
+    )
+
+
 def update_download_directory(frozen: bool, home: Path | None = None) -> Path:
     """Use a private staging folder for packaged installs and Downloads in source mode."""
     if frozen:
         return APP_DIR / "updates"
     return (home or Path.home()) / "Downloads"
+
+
+def cleanup_update_files(directory: Path) -> None:
+    """Remove abandoned staged installers and partial downloads."""
+    for pattern in ("DotaActivity-*-Windows-x64.exe", "*.part"):
+        for path in directory.glob(pattern):
+            try:
+                path.unlink()
+            except OSError:
+                pass
 
 
 def update_helper_command(update_path: Path, target_path: Path, process_id: int,
@@ -201,19 +233,39 @@ def apply_staged_update(process_id: int, target: Path, launch_args: list[str] | 
     _wait_for_process_exit(int(process_id))
     replacement = target.with_name(f".{target.name}.{os.getpid()}.new")
     backup = target.with_name(f".{target.name}.{os.getpid()}.bak")
+    ready_file = target.with_name(f".{target.name}.{os.getpid()}.ready")
+    process = None
     try:
         import shutil
         shutil.copy2(source, replacement)
         os.replace(target, backup)
         try:
             os.replace(replacement, target)
+            ready_file.unlink(missing_ok=True)
             process = subprocess.Popen(
-                [str(target), *(launch_args or [])], cwd=str(target.parent), close_fds=True,
+                [str(target), *(launch_args or []), "--update-ready-file", str(ready_file)],
+                cwd=str(target.parent), close_fds=True,
             )
-            time.sleep(2)
-            if process.poll() is not None:
-                raise RuntimeError("The updated app exited during startup")
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                if ready_file.is_file():
+                    break
+                if process.poll() is not None:
+                    raise RuntimeError("The updated app exited before reporting readiness")
+                time.sleep(0.2)
+            else:
+                raise RuntimeError("The updated app did not become ready within 30 seconds")
         except Exception:
+            if process is not None and process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except Exception:
+                    process.kill()
+                    try:
+                        process.wait(timeout=5)
+                    except Exception:
+                        pass
             try:
                 target.unlink(missing_ok=True)
                 os.replace(backup, target)
@@ -221,11 +273,33 @@ def apply_staged_update(process_id: int, target: Path, launch_args: list[str] | 
                 raise RuntimeError(
                     f"Update failed and automatic rollback failed. The previous executable is at: {backup}"
                 ) from rollback_error
+            try:
+                subprocess.Popen([str(target), *(launch_args or [])], cwd=str(target.parent), close_fds=True)
+            except OSError:
+                pass
             raise
         backup.unlink(missing_ok=True)
+        ready_file.unlink(missing_ok=True)
+        # Remove abandoned installers left by earlier failed or superseded updates.
+        updates_dir = source.parent
+        for stale in updates_dir.glob("DotaActivity-*-Windows-x64.exe"):
+            if stale.resolve() != source:
+                try:
+                    stale.unlink()
+                except OSError:
+                    pass
+        for partial in updates_dir.glob("*.part"):
+            try:
+                partial.unlink()
+            except OSError:
+                pass
     finally:
         try:
             replacement.unlink(missing_ok=True)
+        except OSError:
+            pass
+        try:
+            ready_file.unlink(missing_ok=True)
         except OSError:
             pass
 
@@ -282,6 +356,7 @@ UI_STATUS_EN = {
     "Рейтинг": "Ranked", "Против ботов": "Vs. bots", "Тренировка": "Practice",
     "Обычная игра · All Pick": "Normal game · All Pick", "Обычная игра": "Normal game",
     "Турнир": "Tournament", "Обучение": "Tutorial", "Главное меню": "Main menu",
+    "В главном меню": "In the main menu",
     "Активность появится при запуске игры": "Activity will appear when the game starts",
     "Готовится к игре": "Getting ready to play", "Матч скоро начнётся": "Match starting soon",
     "Победа": "Victory", "Поражение": "Defeat", "Матч завершён": "Match complete",
@@ -347,9 +422,10 @@ def is_dota_running() -> bool:
         result = subprocess.run(
             ["tasklist", "/FI", "IMAGENAME eq dota2.exe", "/FO", "CSV", "/NH"],
             capture_output=True, text=True, check=False,
+            timeout=2,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
         return False
     return result.returncode == 0 and dota_is_listed(result.stdout)
 
@@ -470,7 +546,7 @@ def game_context(map_data: dict, game_state: str = "") -> str:
         return "Против ботов"
     if any(word in lobby_text for word in ("practice", "training", "трен")):
         return "Тренировка"
-    if "rank" in lobby_text:
+    if lobby_text in {"ranked", "rank", "7"}:
         return "Рейтинг"
     try:
         lobby_id = int(lobby)
@@ -481,7 +557,7 @@ def game_context(map_data: dict, game_state: str = "") -> str:
 
     if any(word in mode_text for word in ("bot", "coop", "co-op")):
         return "Против ботов"
-    if "rank" in mode_text:
+    if mode_text in {"ranked", "rank"}:
         return "Рейтинг · All Pick"
     if mode_id == 22:
         return "Рейтинг · All Pick"
@@ -522,9 +598,15 @@ def presence_from_gsi(payload: dict) -> dict | None:
     hero = payload.get("hero") or {}
     state = str(map_data.get("game_state", ""))
     game_time = map_data.get("game_time")
-    hero_raw_name = str(hero.get("name", ""))
+    hero_value = hero.get("name", "")
+    hero_raw_name = hero_value if isinstance(hero_value, str) else ""
     hero_name = prettify_hero(hero_raw_name)
     mode = game_context(map_data, state)
+
+    # Explicit lobby transitions clear an old match presence. Unknown/partial
+    # GSI packets do not clear it, since Valve sends incremental payloads.
+    if state in {"DOTA_GAMERULES_STATE_INIT", "DOTA_GAMERULES_STATE_WAIT_FOR_PLAYERS_TO_LOAD"}:
+        return {"_clear": True}
 
     if state == "DOTA_GAMERULES_STATE_HERO_SELECTION":
         return {"status": "Выбирает героя", "details": "Выбирает героя", "state": mode, "large_image": DOTA_LOGO_URL, "large_text": "Dota 2"}
@@ -540,7 +622,7 @@ def presence_from_gsi(payload: dict) -> dict | None:
                 "large_image": DOTA_LOGO_URL, "large_text": "Dota 2", "start": start,
             }
         stat_keys = ("kills", "deaths", "assists")
-        stats_available = any(key in player for key in stat_keys)
+        stats_available = all(key in player and player[key] is not None for key in stat_keys)
         if stats_available:
             kills, deaths, assists = (player.get(key, 0) for key in stat_keys)
             details = f"{hero_name} · {kills}/{deaths}/{assists}" if hero_name else f"{kills}/{deaths}/{assists}"
@@ -561,8 +643,14 @@ def presence_from_gsi(payload: dict) -> dict | None:
             }
         win_team = map_data.get("win_team")
         team = player.get("team_name")
-        if win_team and team:
-            outcome = "Победа" if win_team == team else "Поражение"
+        team_aliases = {
+            "radiant": "radiant", "good": "radiant", "team2": "radiant",
+            "dire": "dire", "bad": "dire", "team3": "dire",
+        }
+        winner = team_aliases.get(str(win_team or "").strip().casefold())
+        player_team = team_aliases.get(str(team or "").strip().casefold())
+        if winner and player_team:
+            outcome = "Победа" if winner == player_team else "Поражение"
         else:
             outcome = "Матч завершён"
         return {
@@ -650,8 +738,39 @@ def install_gsi_config(cfg_dir: Path, token: str) -> Path:
     return target
 
 
+class GSIHTTPServer(ThreadingHTTPServer):
+    """Bound local GSI request concurrency and prevent slow clients lingering."""
+    daemon_threads = True
+    request_queue_size = 8
+
+    def __init__(self, *args, **kwargs):
+        self._request_slots = threading.BoundedSemaphore(8)
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request, client_address):
+        if not self._request_slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._request_slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._request_slots.release()
+
+    def get_request(self):
+        sock, address = super().get_request()
+        sock.settimeout(2.0)
+        return sock, address
+
+
 class GSIHandler(BaseHTTPRequestHandler):
-    events: queue.Queue = queue.Queue()
+    events: queue.Queue = queue.Queue(maxsize=32)
     token = ""
 
     def do_POST(self):  # noqa: N802 - BaseHTTPRequestHandler API
@@ -660,7 +779,11 @@ class GSIHandler(BaseHTTPRequestHandler):
             if length <= 0 or length > 1_000_000:
                 self.send_error(400)
                 return
-            payload = json.loads(self.rfile.read(length))
+            body = self.rfile.read(length)
+            if len(body) != length:
+                self.send_error(400)
+                return
+            payload = json.loads(body, parse_constant=reject_json_constant)
             if not isinstance(payload, dict):
                 self.send_error(400)
                 return
@@ -677,20 +800,57 @@ class GSIHandler(BaseHTTPRequestHandler):
             if auth.get("token") != self.token:
                 self.send_error(403)
                 return
+            if not json_values_are_safe(payload):
+                self.send_error(400)
+                return
             presence = presence_from_gsi(payload)
-            if presence:
-                self.events.put(presence)
+            if presence is not None:
+                self.enqueue_latest(presence)
             self.send_response(204)
             self.end_headers()
-        except (ValueError, json.JSONDecodeError):
+        except (ValueError, json.JSONDecodeError, RecursionError, OverflowError, TimeoutError):
             self.send_error(400)
+
+    @classmethod
+    def enqueue_latest(cls, presence):
+        try:
+            cls.events.put_nowait(presence)
+        except queue.Full:
+            try:
+                cls.events.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                cls.events.put_nowait(presence)
+            except queue.Full:
+                pass
 
     def log_message(self, *_args):
         pass
 
 
+def json_values_are_safe(value, *, max_depth: int = 64) -> bool:
+    """Reject pathological nesting and non-finite numeric values in a GSI body."""
+    pending = [(value, 0)]
+    while pending:
+        current, depth = pending.pop()
+        if depth > max_depth:
+            return False
+        if isinstance(current, float) and not math.isfinite(current):
+            return False
+        if isinstance(current, dict):
+            pending.extend((item, depth + 1) for item in current.values())
+        elif isinstance(current, list):
+            pending.extend((item, depth + 1) for item in current)
+    return True
+
+
+def reject_json_constant(value: str):
+    raise ValueError(f"Non-finite JSON number: {value}")
+
+
 class DotaActivityApp:
-    def __init__(self, root: tk.Tk, start_hidden: bool = False):
+    def __init__(self, root: tk.Tk, start_hidden: bool = False, readiness_file: Path | None = None):
         self.root = root
         self.root.title(f"{APP_NAME} v{APP_VERSION}")
         self.root.geometry("480x390")
@@ -699,23 +859,30 @@ class DotaActivityApp:
         self._window_icon = tk.PhotoImage(file=str(resource_path(APP_ICON_PNG)))
         self.root.iconphoto(True, self._window_icon)
         self.rpc = None
+        self.last_rpc_payload = None
         self.tray_icon = None
         self.server: ThreadingHTTPServer | None = None
-        self.events: queue.Queue = queue.Queue()
+        self.events: queue.Queue = queue.Queue(maxsize=32)
         GSIHandler.events = self.events
         self.settings = self.load_settings()
         self.gsi_token = self.settings.get("gsi_token") or secrets.token_urlsafe(24)
+        if not isinstance(self.gsi_token, str) or len(self.gsi_token) > 256:
+            self.gsi_token = secrets.token_urlsafe(24)
         # Switch existing installations to English once; after that, preserve
         # the user's explicit language choice across launches.
         self.language = initial_language(self.settings)
         self._localized_widgets: list[tuple[tk.Widget, str]] = []
         self.status_var = tk.StringVar(value=self.tr("waiting"))
+        self.status_message = ("waiting", {})
         self.state_var = tk.StringVar(value=self.tr("game_closed"))
         self.details_var = tk.StringVar(value=self.tr("game_closed_details"))
         self.gsi_var = tk.StringVar(value=self.tr("steam_search"))
+        self.gsi_message = ("steam_search", {})
         self.language_var = tk.StringVar(value="Русский" if self.language == "ru" else "English")
         self.last_presence: dict | None = None
+        self.last_gsi_update: float | None = None
         self.dota_running = False
+        self.process_check_running = False
         self.autostart_var = tk.BooleanVar(value=windows_autostart_enabled())
         if getattr(sys, "frozen", False) and self.autostart_var.get():
             try:
@@ -725,6 +892,7 @@ class DotaActivityApp:
                 # through the checkbox if the registry is temporarily unavailable.
                 pass
         self.update_check_running = False
+        self.update_download_running = False
         self.latest_available_version: str | None = None
         self.dota_cfg_dir: Path | None = None
         self.last_rpc_attempt = 0.0
@@ -734,10 +902,14 @@ class DotaActivityApp:
         self.start_server()
         self.state_var.set(self.tr("game_closed"))
         self.details_var.set(self.tr("game_closed_details"))
-        self.status_var.set(self.tr("waiting"))
+        self.set_status("waiting")
         self.root.after(500, self.poll_events)
         self.root.after(250, self.maintenance)
         self.root.after(1800, lambda: self.check_for_updates(manual=False))
+        if getattr(sys, "frozen", False):
+            self.root.after(10000, self.cleanup_old_updates)
+        if readiness_file is not None:
+            self.root.after(1000, lambda: self._mark_ready(readiness_file))
         self.root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
         if start_hidden:
             self.root.withdraw()
@@ -747,8 +919,16 @@ class DotaActivityApp:
     def load_settings() -> dict:
         try:
             settings = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
-            return settings if isinstance(settings, dict) else {}
-        except (OSError, json.JSONDecodeError):
+            if not isinstance(settings, dict):
+                return {}
+            if settings.get("language") not in (None, "en", "ru"):
+                settings.pop("language", None)
+            if not isinstance(settings.get("gsi_token"), str):
+                settings.pop("gsi_token", None)
+            if not isinstance(settings.get("dismissed_update_version"), str):
+                settings.pop("dismissed_update_version", None)
+            return settings
+        except (OSError, UnicodeError, json.JSONDecodeError, RecursionError):
             return {}
 
     def tr(self, key: str, **values) -> str:
@@ -791,8 +971,13 @@ class DotaActivityApp:
         elif self.last_presence:
             self.state_var.set(self.ui_text(self.last_presence.get("status", "Dota")))
             self.details_var.set(self.ui_text(self.last_presence.get("details", "")))
-        self.status_var.set(self.ui_text(self.status_var.get()))
-        self.gsi_var.set(self.ui_text(self.gsi_var.get()))
+        if getattr(self, "status_message", None):
+            key, values = self.status_message
+            self.status_var.set(self.tr(key, **values))
+        else:
+            self.status_var.set(self.ui_text(self.status_var.get()))
+        gsi_key, gsi_values = self.gsi_message
+        self.gsi_var.set(self.tr(gsi_key, **gsi_values))
         self.refresh_tray_menu()
         self.save_settings()
         if self.dota_running and self.last_presence:
@@ -815,12 +1000,40 @@ class DotaActivityApp:
 
     def save_settings(self):
         APP_DIR.mkdir(parents=True, exist_ok=True)
-        SETTINGS_PATH.write_text(json.dumps({
+        settings = json.dumps({
             "gsi_token": self.gsi_token,
             "language": self.language,
             "language_settings_version": LANGUAGE_SETTINGS_VERSION,
             "dismissed_update_version": self.settings.get("dismissed_update_version"),
-        }, indent=2), encoding="utf-8")
+        }, indent=2).encode("utf-8")
+        temporary = SETTINGS_PATH.with_suffix(".json.tmp")
+        try:
+            temporary.write_bytes(settings)
+            os.replace(temporary, SETTINGS_PATH)
+        finally:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def set_status(self, key: str, **values):
+        self.status_message = (key, values)
+        self.status_var.set(self.tr(key, **values))
+
+    def set_gsi_status(self, key: str, **values):
+        self.gsi_message = (key, values)
+        self.gsi_var.set(self.tr(key, **values))
+
+    @staticmethod
+    def _mark_ready(path: Path):
+        try:
+            path.write_text("ready", encoding="ascii")
+        except OSError:
+            pass
+
+    def cleanup_old_updates(self):
+        if not self.update_download_running:
+            cleanup_update_files(APP_DIR / "updates")
 
     def build_ui(self):
         style = ttk.Style()
@@ -887,8 +1100,11 @@ class DotaActivityApp:
         gsi_panel = tk.Frame(main, bg="#191820", padx=10, pady=8, highlightthickness=1, highlightbackground="#2b2935")
         gsi_panel.pack(fill="x", pady=(0, 9))
         self.localized(tk.Label(gsi_panel, bg="#191820", fg="#a78bfa", font=("Segoe UI Semibold", 8)), "gsi_title").pack(anchor="w")
-        gsi_label = tk.Label(gsi_panel, textvariable=self.gsi_var, bg="#191820", fg="#b7b9c6", font=("Segoe UI", 8), wraplength=400, justify="left")
-        gsi_label.pack(anchor="w", pady=(2, 0))
+        gsi_controls = ttk.Frame(gsi_panel)
+        gsi_controls.pack(fill="x", pady=(2, 0))
+        gsi_label = tk.Label(gsi_controls, textvariable=self.gsi_var, bg="#191820", fg="#b7b9c6", font=("Segoe UI", 8), wraplength=400, justify="left")
+        gsi_label.pack(side="left", anchor="w", fill="x", expand=True)
+        self.localized(ttk.Button(gsi_controls, style="Action.TButton", command=self.repair_gsi), "gsi_repair").pack(side="right", padx=(8, 0))
 
         actions = ttk.Frame(main)
         actions.pack(fill="x")
@@ -929,7 +1145,7 @@ class DotaActivityApp:
         if self.update_check_running:
             return
         self.update_check_running = True
-        self.status_var.set(self.tr("update_checking"))
+        self.set_status("update_checking")
         update_button = getattr(self, "update_button", None)
         if update_button:
             update_button.configure(state="disabled")
@@ -946,7 +1162,7 @@ class DotaActivityApp:
                 with urllib.request.urlopen(request, timeout=8) as response:
                     release = json.loads(response.read(2_000_000))
                 tag = release.get("tag_name", "") if isinstance(release, dict) else ""
-                if not re.fullmatch(r"v?\d+\.\d+\.\d+", tag):
+                if not isinstance(tag, str) or not re.fullmatch(r"v?\d+\.\d+\.\d+", tag):
                     raise ValueError("Invalid release version")
                 if compare_versions(tag, APP_VERSION) <= 0:
                     current_release = True
@@ -954,9 +1170,12 @@ class DotaActivityApp:
                     update = parse_release_update(release)
                     if update is None:
                         raise ValueError("The release does not contain the expected Windows executable")
-            except (OSError, ValueError, json.JSONDecodeError, urllib.error.URLError) as exc:
+            except (OSError, ValueError, TypeError, json.JSONDecodeError, urllib.error.URLError) as exc:
                 error = exc
-            self.root.after(0, lambda: self.finish_update_check(update, error, current_release, manual))
+            try:
+                self.root.after(0, lambda: self.finish_update_check(update, error, current_release, manual))
+            except (RuntimeError, tk.TclError):
+                pass
 
         threading.Thread(target=worker, name="DotaActivityUpdateCheck", daemon=True).start()
 
@@ -965,19 +1184,19 @@ class DotaActivityApp:
         if getattr(self, "update_button", None):
             self.update_button.configure(state="normal")
         if error:
-            self.status_var.set(self.tr("update_unavailable"))
+            self.set_status("update_unavailable")
             if manual:
                 messagebox.showerror(self.tr("update_error_title"), self.tr("update_unavailable"))
             return
         if current or update is None:
-            self.status_var.set(self.tr("update_current", version=APP_VERSION))
+            self.set_status("update_current", version=APP_VERSION)
             if manual:
                 messagebox.showinfo(self.tr("update_none_title"), self.tr("update_none", version=APP_VERSION))
             return
 
         self.latest_available_version = update["version"]
         if not manual:
-            self.status_var.set(self.tr("update_available", version=update["version"]))
+            self.set_status("update_available", version=update["version"])
             return
         notes = update.get("notes", "")[:800] or ("Нет описания релиза." if self.language == "ru" else "No release notes.")
         accepted = messagebox.askyesno(
@@ -989,10 +1208,11 @@ class DotaActivityApp:
         else:
             self.settings["dismissed_update_version"] = update["version"]
             self.save_settings()
-            self.status_var.set(self.tr("update_available", version=update["version"]))
+            self.set_status("update_available", version=update["version"])
 
     def download_update(self, update: dict):
-        self.status_var.set(self.tr("update_downloading"))
+        self.update_download_running = True
+        self.set_status("update_downloading")
         if getattr(self, "update_button", None):
             self.update_button.configure(state="disabled")
 
@@ -1000,6 +1220,7 @@ class DotaActivityApp:
             path = None
             error = None
             temporary = None
+            digest = hashlib.sha256()
             try:
                 download_dir = update_download_directory(bool(getattr(sys, "frozen", False)))
                 download_dir.mkdir(parents=True, exist_ok=True)
@@ -1016,21 +1237,28 @@ class DotaActivityApp:
                         if total > MAX_UPDATE_BYTES:
                             raise ValueError("Update file exceeds the 250 MB limit")
                         output.write(block)
+                        digest.update(block)
                 if total == 0:
                     raise ValueError("Downloaded file is empty")
+                if not sha256_matches(digest.hexdigest(), update["sha256"]):
+                    raise ValueError("The downloaded file failed its SHA-256 integrity check")
                 os.replace(temporary, path)
-            except (OSError, ValueError, urllib.error.URLError) as exc:
+            except (OSError, ValueError, KeyError, urllib.error.URLError, http.client.HTTPException) as exc:
                 error = exc
                 if temporary:
                     try:
                         temporary.unlink(missing_ok=True)
                     except OSError:
                         pass
-            self.root.after(0, lambda: self.finish_update_download(path, error))
+            try:
+                self.root.after(0, lambda: self.finish_update_download(path, error))
+            except (RuntimeError, tk.TclError):
+                pass
 
         threading.Thread(target=worker, name="DotaActivityUpdateDownload", daemon=True).start()
 
     def finish_update_download(self, path: Path | None, error: Exception | None):
+        self.update_download_running = False
         if getattr(self, "update_button", None):
             self.update_button.configure(state="normal")
         if error or path is None:
@@ -1057,25 +1285,34 @@ class DotaActivityApp:
         cfg_dir = find_dota_cfg_dir()
         if cfg_dir is None:
             self.dota_cfg_dir = None
-            self.gsi_var.set(self.tr("steam_search"))
+            self.set_gsi_status("steam_search")
             return
         try:
             target = install_gsi_config(cfg_dir, self.gsi_token)
             self.dota_cfg_dir = cfg_dir
-            self.gsi_var.set(self.tr("dota_found", library=target.parent.parent.parent.name))
+            self.set_gsi_status("dota_found", library=target.parent.parent.parent.name)
             self.save_settings()
         except OSError as exc:
             self.dota_cfg_dir = None
-            self.gsi_var.set(self.tr("gsi_error", error=exc))
+            self.set_gsi_status("gsi_error", error=exc)
 
     def start_server(self):
         GSIHandler.token = self.gsi_token
         try:
-            self.server = ThreadingHTTPServer(("127.0.0.1", GSI_PORT), GSIHandler)
+            self.server = GSIHTTPServer(("127.0.0.1", GSI_PORT), GSIHandler)
             threading.Thread(target=self.server.serve_forever, daemon=True).start()
-            self.status_var.set(self.tr("server_ready"))
+            if self.dota_running:
+                self.set_status("game_started")
+            else:
+                self.set_status("server_ready")
         except OSError:
-            self.status_var.set(self.tr("server_error"))
+            self.server = None
+            self.set_status("server_error")
+
+    def repair_gsi(self):
+        self.ensure_gsi()
+        if self.server is None:
+            self.start_server()
 
     def toggle_autostart(self):
         enabled = not bool(self.autostart_var.get())
@@ -1088,7 +1325,7 @@ class DotaActivityApp:
             messagebox.showerror(self.tr("autostart_error_title"), self.tr("autostart_error", error=exc))
             return
         self.refresh_settings_controls()
-        self.status_var.set(self.tr("autostart_enabled" if enabled else "autostart_disabled"))
+        self.set_status("autostart_enabled" if enabled else "autostart_disabled")
 
     def refresh_settings_controls(self):
         autostart_button = getattr(self, "autostart_button", None)
@@ -1115,21 +1352,37 @@ class DotaActivityApp:
         self.last_rpc_attempt = time.monotonic()
         app_id = os.environ.get("DOTA_ACTIVITY_DISCORD_APP_ID", DISCORD_APPLICATION_ID).strip()
         if not app_id.isdigit():
-            self.status_var.set("Сборка ожидает Discord Application ID проекта")
+            self.set_status("app_id_missing")
             return
         try:
             from pypresence import Presence
             rpc = Presence(app_id)
             rpc.connect()
             self.rpc = rpc
-            self.status_var.set(self.tr("rpc_connected"))
-            self.send_presence({"status": "Главное меню", "details": "Готовится к игре", "image": "dota2"})
+            self.last_rpc_payload = None
+            self.set_status("rpc_connected")
+            current = self.last_presence or {
+                "status": "В главном меню", "details": "Готовится к игре", "state": "Dota 2",
+                "large_image": DOTA_LOGO_URL, "large_text": "Dota 2",
+            }
+            self.send_presence(current)
         except Exception:
             self.rpc = None
-            self.status_var.set(self.tr("rpc_wait"))
+            self.set_status("rpc_wait")
 
     def send_presence(self, data: dict):
         if not self.dota_running:
+            return
+        if data.get("_clear"):
+            self.last_presence = None
+            self.last_rpc_payload = None
+            if self.rpc:
+                try:
+                    self.rpc.clear()
+                except Exception:
+                    pass
+            self.state_var.set(self.tr("activity_default"))
+            self.details_var.set(self.tr("activity_details"))
             return
         self.last_presence = data
         self.state_var.set(self.ui_text(data.get("status", "Dota 2")))
@@ -1151,10 +1404,13 @@ class DotaActivityApp:
                 kwargs["small_text"] = discord_data.get("small_text", "Dota 2")
             if discord_data.get("start"):
                 kwargs["start"] = discord_data["start"]
+            if kwargs == self.last_rpc_payload:
+                return
             self.rpc.update(**kwargs)
-            self.status_var.set(self.tr("rpc_published"))
+            self.last_rpc_payload = kwargs
+            self.set_status("rpc_published")
         except Exception:
-            self.status_var.set(self.tr("rpc_lost"))
+            self.set_status("rpc_lost")
             try:
                 self.rpc.close()
             except Exception:
@@ -1163,36 +1419,63 @@ class DotaActivityApp:
             self.last_rpc_attempt = 0
 
     def poll_events(self):
-        latest = None
+        latest = _NO_GSI_EVENT
         while True:
             try:
                 latest = self.events.get_nowait()
             except queue.Empty:
                 break
-        if latest:
-            self.send_presence(latest)
+        if latest is not _NO_GSI_EVENT:
+            if latest is not None and not latest.get("_clear"):
+                self.last_gsi_update = time.monotonic()
+            elif latest is None or latest.get("_clear"):
+                self.last_gsi_update = None
+            self.send_presence(latest if latest is not None else {"_clear": True})
         self.root.after(500, self.poll_events)
 
     def maintenance(self):
+        if hasattr(self, "server") and self.server is None and not getattr(self, "_exiting", False):
+            self.start_server()
         if self.dota_cfg_dir is None:
             self.ensure_gsi()
+        if not self.process_check_running and not getattr(self, "_exiting", False):
+            self.process_check_running = True
+            threading.Thread(target=self._check_dota_process, name="DotaActivityProcessCheck", daemon=True).start()
+        if (self.dota_running and self.last_presence and self.last_gsi_update is not None
+                and time.monotonic() - self.last_gsi_update > 90):
+            self.last_gsi_update = None
+            self.send_presence({"_clear": True})
+        if self.dota_running and self.rpc is None:
+            self.try_connect()
+        self.root.after(2500, self.maintenance)
+
+    def _check_dota_process(self):
         running = is_dota_running()
+        try:
+            self.root.after(0, lambda: self._apply_dota_process_state(running))
+        except (RuntimeError, tk.TclError):
+            self.process_check_running = False
+
+    def _apply_dota_process_state(self, running: bool):
+        self.process_check_running = False
+        if getattr(self, "_exiting", False) or running == self.dota_running:
+            return
         if running != self.dota_running:
             self.dota_running = running
             if running:
                 self.last_rpc_attempt = 0.0
                 self.state_var.set(self.tr("activity_default"))
                 self.details_var.set(self.tr("activity_details"))
-                self.status_var.set(self.tr("game_started"))
+                self.set_status("game_started")
             else:
                 self.disconnect_rpc()
                 self.last_presence = None
+                self.last_gsi_update = None
                 self.state_var.set(self.tr("game_closed"))
                 self.details_var.set(self.tr("game_closed_details"))
-                self.status_var.set(self.tr("waiting"))
-        if self.dota_running and self.rpc is None:
+                self.set_status("waiting")
+        if running and self.rpc is None:
             self.try_connect()
-        self.root.after(2500, self.maintenance)
 
     def _create_tray_icon(self):
         import pystray
@@ -1208,6 +1491,8 @@ class DotaActivityApp:
             try:
                 self._create_tray_icon()
             except Exception as exc:
+                self.root.deiconify()
+                self.root.lift()
                 messagebox.showerror(self.tr("tray_error_title"), self.tr("tray_error", error=exc))
                 return
         self.root.withdraw()
@@ -1219,6 +1504,7 @@ class DotaActivityApp:
 
     def disconnect_rpc(self):
         rpc, self.rpc = self.rpc, None
+        self.last_rpc_payload = None
         if rpc is None:
             return
         try:
@@ -1268,6 +1554,11 @@ class DotaActivityApp:
 
 def main():
     start_hidden = "--background" in sys.argv[1:]
+    readiness_file = None
+    if "--update-ready-file" in sys.argv[1:]:
+        index = sys.argv.index("--update-ready-file")
+        if index + 1 < len(sys.argv):
+            readiness_file = Path(sys.argv[index + 1])
     if not acquire_single_instance():
         if not start_hidden:
             language = initial_language(DotaActivityApp.load_settings())
@@ -1280,7 +1571,7 @@ def main():
             root.destroy()
         return
     root = tk.Tk()
-    DotaActivityApp(root, start_hidden=start_hidden)
+    DotaActivityApp(root, start_hidden=start_hidden, readiness_file=readiness_file)
     root.mainloop()
 
 

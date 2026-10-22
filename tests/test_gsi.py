@@ -32,6 +32,18 @@ class GsiParsingTests(unittest.TestCase):
         GSIHandler.do_POST(handler)
         self.assertEqual(handler.errors, [400])
 
+    def test_gsi_handler_rejects_infinity_without_crashing_request_thread(self):
+        handler = GSIHandlerTestDouble(
+            b'{"auth":{"token":"test"},"map":{"game_state":"DOTA_GAMERULES_STATE_GAME_IN_PROGRESS","game_time":Infinity}}'
+        )
+        GSIHandler.do_POST(handler)
+        self.assertEqual(handler.errors, [400])
+
+    def test_gsi_handler_rejects_excessively_nested_json(self):
+        handler = GSIHandlerTestDouble(b"[" * 1200 + b"0" + b"]" * 1200)
+        GSIHandler.do_POST(handler)
+        self.assertEqual(handler.errors, [400])
+
     def test_discord_application_id_is_embedded(self):
         self.assertTrue(DISCORD_APPLICATION_ID.isdigit())
 
@@ -157,6 +169,23 @@ class GsiParsingTests(unittest.TestCase):
         })
         self.assertEqual(result["details"], "Поражение")
         self.assertEqual(localized_presence(result, "en")["details"], "Defeat")
+
+    def test_unknown_post_game_team_does_not_assume_loss(self):
+        result = presence_from_gsi({
+            "map": {"game_state": "DOTA_GAMERULES_STATE_POST_GAME", "win_team": "dire"},
+            "player": {"team_name": "unknown"},
+            "hero": {"name": None},
+        })
+        self.assertEqual(result["details"], "Матч завершён")
+        self.assertEqual(result["large_text"], "Dota 2")
+
+    def test_partial_kda_does_not_fill_missing_values_with_zero(self):
+        result = presence_from_gsi({
+            "map": {"game_state": "DOTA_GAMERULES_STATE_GAME_IN_PROGRESS"},
+            "player": {"kills": 2},
+            "hero": {"name": "npc_dota_hero_axe"},
+        })
+        self.assertEqual(result["details"], "Axe")
 
     def test_discovers_dota_in_a_secondary_steam_library(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -72,8 +72,8 @@ class RuntimeControlTests(unittest.TestCase):
         instance.details_var = Var()
         instance.status_var = Var()
         instance.root = FakeRoot()
-        with patch.object(app, "is_dota_running", return_value=False):
-            instance.maintenance()
+        instance.process_check_running = True
+        instance._apply_dota_process_state(False)
         self.assertTrue(rpc.cleared)
         self.assertTrue(rpc.closed)
         self.assertIsNone(instance.rpc)
