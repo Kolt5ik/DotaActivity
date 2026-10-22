@@ -55,7 +55,7 @@ You will need:
 ## What appears in Discord
 
 - During hero selection and the pre-game screen, the activity uses the centered Dota logo.
-- During a match, it can show your hero, K/D/A, game mode, net worth, and match time when Dota provides those details.
+- During a match, it can show your hero, K/D/A, game mode, and match time when Dota provides those details.
 - Ranked, Turbo, training, and bot matches are identified from the game data where possible.
 
 The available details depend on the current game state and the information Dota sends through GSI.
@@ -65,7 +65,7 @@ The available details depend on the current game state and the information Dota 
 - **Language:** English is selected by default. Choose Russian in the app window to switch languages; the choice is saved.
 - **Run with Windows:** Turn on the autostart option in the main window. It starts minimized to the system tray when you sign in.
 - **System tray:** Closing the window hides the app in the tray. Use **Exit** in the tray menu to stop it completely.
-- **Updates:** The app checks GitHub Releases for a newer stable version. After you accept, it downloads the update, closes, replaces its current `.exe`, and starts again.
+- **Updates:** The app checks GitHub Releases for a newer stable version. Before installation it checks the downloaded executable against GitHub's SHA-256 asset digest. After you accept, it replaces its current `.exe` only after the new copy reports successful startup; otherwise it restores and relaunches the previous copy.
 
 ## Performance and memory use
 
@@ -84,11 +84,12 @@ Medal can publish its own Rich Presence to Discord. DotaActivity cannot assign i
 1. Make sure the Discord **desktop app** is open.
 2. Check that Dota Activity reports that it found Dota 2 and configured GSI.
 3. If Dota 2 was open during the first setup, restart the game.
-4. Start a match or enter the game again. Some details only become available after the match begins.
+4. Use **Repair GSI** in the app if the local connection is unavailable, then restart Dota 2.
+5. Start a match or enter the game again. Some details only become available after the match begins.
 
 ## How it works and privacy
 
-The source code is open under the MIT License and available for review. Dota 2 sends game-state updates to a local address on your PC (`127.0.0.1`), and Dota Activity publishes the Rich Presence through the Discord desktop app. The app does not ask for your Steam password or send game-state data to a Dota Activity server. It contacts GitHub to check for releases and download an update only if you choose to install one.
+The source code is open under the MIT License and available for review. Dota 2 sends game-state updates to a local address on your PC (`127.0.0.1`), and Dota Activity publishes the Rich Presence through the Discord desktop app. The app does not ask for your Steam password or send game-state data to a Dota Activity server. It contacts GitHub to check for releases and download an update only if you choose to install one. The GSI token is a local shared secret between Dota and the app; it is not a Discord or Steam account token. Do not include it in screenshots or diagnostic reports.
 
 ## Build from source
 

@@ -1,10 +1,11 @@
 name: Build Windows app
 
 on:
+  push:
+    branches: [main]
+    tags: ["v*"]
   pull_request:
     branches: [main]
-  push:
-    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -36,6 +37,14 @@ jobs:
             $version = [regex]::Match($source, 'APP_VERSION\s*=\s*"(\d+\.\d+\.\d+)"')
             if (-not $version.Success -or $env:GITHUB_REF_NAME -ne "v$($version.Groups[1].Value)") {
               throw "Release tag must match APP_VERSION in app.py."
+            }
+          }
+          $version = [regex]::Match($source, 'APP_VERSION\s*=\s*"(\d+\.\d+\.\d+)"')
+          if (-not $version.Success) { throw "APP_VERSION is missing or invalid." }
+          $metadata = Get-Content version_info.txt -Raw
+          foreach ($field in @('FileVersion', 'ProductVersion')) {
+            if ($metadata -notmatch "StringStruct\('$field', '$([regex]::Escape($version.Groups[1].Value))'\)") {
+              throw "$field in version_info.txt must match APP_VERSION."
             }
           }
 
