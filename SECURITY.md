@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Only the latest stable release receives security fixes. The current source version is **v0.0.12**. Please update to the latest stable release before reporting an issue affecting an older version.
+Only the latest stable release receives security fixes. The current source version is **v0.0.13**. Please update to the latest stable release before reporting an issue affecting an older version.
 
 ## Reporting a vulnerability
 
